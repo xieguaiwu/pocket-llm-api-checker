@@ -11,7 +11,8 @@ A minimal dark-mode Android app to quickly check your **DeepSeek API** and **Ope
 - **DeepSeek**: balance (total / topped-up / granted, multi-currency) + official spend stats (today / 7-day / 30-day + daily breakdown, requires optional platform token)
 - **OpenCode Go plan** (subscription): rolling 5h / weekly / monthly usage percentages with reset countdowns — via the official `/zen/go/v1/usage` API
 - **OpenCode Zen plan** (pay-as-you-go): balance, monthly spend / limit, auto-reload settings — parsed from the workspace billing page
-- **Multiple OpenCode accounts**: add up to 3 (or more) accounts with distinct names; each gets its own card on the home screen and a dedicated detail page
+- **Multiple OpenCode accounts**: add up to 3 (or more) accounts with distinct names, rename or delete them anytime; each gets its own card on the home screen and a dedicated detail page
+- **Pull-to-refresh**: pull down and hold for 2.5s to auto-refresh everything (or just pull and release past the threshold); plus auto-refresh every 5 minutes
 - **Extremely minimal**: single dark color palette (9 colors), no gradients, no clutter
 - **Secure by default**: all keys/cookies/tokens encrypted with Android Keystore AES-GCM before storage
 
