@@ -1,0 +1,168 @@
+package com.xieguiawu.apicheckers.ui
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.xieguiawu.apicheckers.ui.theme.Accent
+import com.xieguiawu.apicheckers.ui.theme.TextSub
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.min
+
+// ── 纯决策逻辑（可 JVM 单测）─────────────────────────────────
+
+/** 下拉刷新决策结果 */
+enum class PullAction { None, Refresh, Reset }
+
+/**
+ * 下拉刷新决策：给定「手指静止时长 / 下拉偏移 / 阈值 / 刷新中状态」决定动作。
+ * - 刷新中 → None（等待刷新完成）
+ * - 手指仍在拖动（静止 < releaseMs）→ None
+ * - 静止 ≥ holdMs 且偏移 ≥ 阈值 → Refresh（保持几秒自动刷新，无需松手）
+ * - 已松手（静止 ≥ releaseMs）且偏移 ≥ 阈值 → Refresh（标准松手刷新）
+ * - 已松手且偏移 < 阈值 → Reset（未达阈值，平滑复位）
+ */
+fun decidePullAction(
+    idleMs: Long,
+    pullOffset: Float,
+    thresholdPx: Float,
+    isRefreshing: Boolean,
+    holdMs: Long = 2500,
+    releaseMs: Long = 500,
+): PullAction {
+    if (isRefreshing) return PullAction.None
+    if (idleMs < releaseMs) return PullAction.None // 手指仍在拖动
+    if (pullOffset >= thresholdPx) return PullAction.Refresh
+    return PullAction.Reset
+}
+
+// ── 下拉刷新容器 ──────────────────────────────────────────────
+
+/**
+ * 下拉刷新容器：包裹可滚动内容（LazyColumn 等）。
+ * - 下拉超过阈值（默认 70dp）→ 显示指示器
+ * - 保持下拉不动 2.5 秒 → 自动触发刷新（无需松手）
+ * - 松手（静止 500ms）且达到阈值 → 触发刷新
+ * - 松手未达阈值 → 平滑复位
+ */
+@Composable
+fun PullRefreshContainer(
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val density = LocalDensity.current
+    val thresholdPx = with(density) { 70.dp.toPx() }
+    val maxPullPx = with(density) { 140.dp.toPx() }
+    var pullOffset by remember { mutableStateOf(0f) }
+    var lastDragAt by remember { mutableLongStateOf(0L) }
+    val refreshing by rememberUpdatedState(isRefreshing)
+    val refreshAction by rememberUpdatedState(onRefresh)
+    val scope = rememberCoroutineScope()
+
+    // 下拉位移动画复位（120ms 线性衰减）
+    fun resetPull() {
+        scope.launch {
+            val start = pullOffset
+            val steps = 12
+            for (i in 1..steps) {
+                pullOffset = start * (1f - i / steps.toFloat())
+                delay(10)
+            }
+            pullOffset = 0f
+        }
+    }
+
+    val connection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val dy = available.y
+                // 手指下拉（dy>0）且未到最大下拉距离
+                if (dy > 0 && source == NestedScrollSource.Drag && pullOffset < maxPullPx) {
+                    val consumed = min(dy, maxPullPx - pullOffset)
+                    pullOffset += consumed
+                    lastDragAt = android.os.SystemClock.uptimeMillis()
+                    return Offset(0f, consumed)
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
+    // 轮询监控：检测松手 / 保持自动刷新
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(200)
+            if (pullOffset <= 0f) continue
+            val idle = android.os.SystemClock.uptimeMillis() - lastDragAt
+            when (decidePullAction(idle, pullOffset, thresholdPx, refreshing)) {
+                PullAction.Refresh -> refreshAction()
+                PullAction.Reset -> resetPull()
+                PullAction.None -> Unit
+            }
+        }
+    }
+
+    // 刷新完成后自动复位
+    LaunchedEffect(isRefreshing) {
+        if (!isRefreshing && pullOffset > 0f) {
+            delay(300) // 等状态渲染稳定
+            if (pullOffset > 0f) resetPull()
+        }
+    }
+
+    Box(modifier = modifier.nestedScroll(connection)) {
+        content()
+
+        val show = pullOffset > 0f || refreshing
+        AnimatedVisibility(visible = show, enter = fadeIn(), exit = fadeOut()) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = with(density) { (pullOffset * 0.5f).toDp() })
+                    .padding(top = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    color = Accent,
+                    strokeWidth = 2.dp,
+                    progress = if (refreshing) 0.75f else 0f,
+                )
+                Text(
+                    if (refreshing) "刷新中…" else "下拉刷新 · 保持 2.5 秒自动刷新",
+                    color = TextSub,
+                    fontSize = 11.sp,
+                )
+            }
+        }
+    }
+}

@@ -113,13 +113,19 @@ fun HomeScreen(vm: AppViewModel, onOpenAccount: (String) -> Unit, onOpenSettings
         }
     }
 
-    Column(
+    PullRefreshContainer(
+        isRefreshing = ui.refreshing,
+        onRefresh = { vm.refreshAll() },
         modifier = Modifier
             .fillMaxSize()
             .background(Bg)
-            .safeDrawingPadding()
-            .padding(horizontal = 20.dp),
+            .safeDrawingPadding(),
     ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp),
+        ) {
         // 顶栏：标题 + 更新时间 + 刷新/设置按钮
         Row(
             modifier = Modifier
@@ -162,6 +168,7 @@ fun HomeScreen(vm: AppViewModel, onOpenAccount: (String) -> Unit, onOpenSettings
                 }
             }
         }
+    }
     }
 }
 

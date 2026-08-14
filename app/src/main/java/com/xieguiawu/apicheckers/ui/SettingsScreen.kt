@@ -19,8 +19,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -70,6 +72,8 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
     var showDsToken by remember { mutableStateOf(false) }
     // OpenCode 账号
     var accounts by remember { mutableStateOf(SecureSettings.getAccounts()) }
+    var renaming by remember { mutableStateOf<com.xieguiawu.apicheckers.data.Account?>(null) }
+    var renameText by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf(false) }
     var accName by remember { mutableStateOf("") }
     var accKey by remember { mutableStateOf("") }
@@ -343,6 +347,47 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                     }
                 }
             }
+        }
+
+        // 账号重命名对话框
+        renaming?.let { acc ->
+            AlertDialog(
+                onDismissRequest = { renaming = null },
+                containerColor = Card,
+                titleContentColor = TextMain,
+                textContentColor = TextMain,
+                title = { Text("重命名账号") },
+                text = {
+                    OutlinedTextField(
+                        value = renameText,
+                        onValueChange = { renameText = it },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent,
+                            unfocusedBorderColor = Divider,
+                            focusedTextColor = TextMain,
+                            unfocusedTextColor = TextMain,
+                            cursorColor = Accent,
+                            focusedLabelColor = Accent,
+                            unfocusedLabelColor = TextSub,
+                        ),
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val newName = renameText.trim()
+                        if (newName.isNotBlank()) {
+                            SecureSettings.saveAccount(acc.copy(name = newName))
+                            accounts = SecureSettings.getAccounts()
+                            flashHint("已重命名为「${newName}」")
+                        }
+                        renaming = null
+                    }) { Text("保存") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { renaming = null }) { Text("取消", color = TextSub) }
+                },
+            )
         }
     }
 }
