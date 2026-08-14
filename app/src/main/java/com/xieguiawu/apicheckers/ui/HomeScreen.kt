@@ -49,7 +49,6 @@ import com.xieguiawu.apicheckers.ui.theme.Bg
 import com.xieguiawu.apicheckers.ui.theme.Card
 import com.xieguiawu.apicheckers.ui.theme.Danger
 import com.xieguiawu.apicheckers.ui.theme.Divider
-import com.xieguiawu.apicheckers.ui.theme.Ok
 import com.xieguiawu.apicheckers.ui.theme.TextMain
 import com.xieguiawu.apicheckers.ui.theme.TextSub
 import com.xieguiawu.apicheckers.ui.theme.Warn
