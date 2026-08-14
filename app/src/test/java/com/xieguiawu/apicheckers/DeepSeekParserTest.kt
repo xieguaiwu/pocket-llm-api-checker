@@ -47,3 +47,42 @@ class DeepSeekParserTest {
         assertTrue(b.infos.isEmpty())
     }
 }
+
+class DeepSeekAggregationTest {
+    @Test
+    fun `30 天连续消费聚合不截断`() {
+        val ref = java.time.LocalDate.of(2026, 8, 14)
+        // 30 天每天 1 元（含 7 月与 8 月跨月）
+        val map = (0 until 30).associate { ref.minusDays(it.toLong()).toString() to 1.0 }
+        val c = Parsers.aggregateCost(map, ref)
+        assertEquals(1.0, c.today, 1e-6)
+        assertEquals(7.0, c.last7d, 1e-6)
+        assertEquals(30.0, c.last30d, 1e-6)
+        assertEquals("days 不应被截断到 7 条", 30L, c.days.size.toLong())
+    }
+
+    @Test
+    fun `parseDeepSeekCost 返回全部天数`() {
+        // 构造 20 天数据：7 月 26 日 - 8 月 14 日（跨月 JSON）
+        val sb = StringBuilder("""{"code":0,"data":{"biz_data":[{"days":[""")
+        val ref = java.time.LocalDate.of(2026, 8, 14)
+        for (i in 19 downTo 0) {
+            val d = ref.minusDays(i.toLong())
+            if (i != 19) sb.append(",")
+            sb.append("""{"date":"${d}","data":[{"model":"deepseek-chat","usage":[{"type":"input","amount":0.5}]}]}""")
+        }
+        sb.append("""]}]}}""")
+        val c = Parsers.parseDeepSeekCost(sb.toString(), ref).getOrThrow()
+        assertEquals("解析器应保留全部天数", 20L, c.days.size.toLong())
+        assertEquals("每天 0.5 元 × 20 天", 10.0, c.last30d, 1e-6)
+        assertEquals("每天 0.5 元 × 7 天", 3.5, c.last7d, 1e-6)
+    }
+
+    @Test
+    fun `空消费返回空聚合不崩溃`() {
+        val c = Parsers.aggregateCost(emptyMap(), java.time.LocalDate.of(2026, 8, 14))
+        assertEquals(0.0, c.today, 1e-6)
+        assertEquals(0.0, c.last30d, 1e-6)
+        assertEquals(0, c.days.size)
+    }
+}

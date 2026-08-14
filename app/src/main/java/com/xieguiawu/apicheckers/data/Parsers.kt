@@ -24,7 +24,7 @@ object Parsers {
     // 1) 以 customerID:"cus_ 为锚点；2) 向前找对象起始 {；3) 深度计数取匹配 }；
     // 4) 对象内按字段正则逐个匹配（字段顺序可变）
 
-    private val RE_BALANCE = Regex("balance:(-?\\d+(?:\\.\\d+)?)")
+    private val RE_BALANCE = Regex("(?:^|,)balance:(-?\\d+(?:\\.\\d+)?)")
     private val RE_MONTHLY_USAGE = Regex("monthlyUsage:(-?\\d+(?:\\.\\d+)?)")
     private val RE_MONTHLY_LIMIT = Regex("monthlyLimit:(-?\\d+(?:\\.\\d+)?)")
     private val RE_RELOAD = Regex("reload:(!0|!1|true|false|null)")
@@ -34,12 +34,42 @@ object Parsers {
     fun parseZenBilling(html: String): Result<ZenBilling> = runCatching {
         val start = html.indexOf("customerID:\"cus_")
         if (start == -1) error("会话已过期，请更新 Cookie")
-        val braceStart = html.lastIndexOf("{", start)
+        // 从锚点向前找对象起始 {：跳过字符串字面量（字符串内可能含 { 字符）
+        var braceStart = -1
+        var inStr = false
+        var esc = false
+        for (i in start - 1 downTo 0) {
+            val c = html[i]
+            if (inStr) {
+                when {
+                    esc -> esc = false
+                    c == '\\' -> esc = true
+                    c == '"' -> inStr = false
+                }
+                continue
+            }
+            when (c) {
+                '"' -> inStr = true
+                '{' -> { braceStart = i; break }
+            }
+        }
         if (braceStart == -1) error("账单页面结构异常")
+        // 深度计数到匹配 }：同样跳过字符串字面量
         var depth = 0
         var end = -1
+        inStr = false; esc = false
         for (i in braceStart until html.length) {
-            when (html[i]) {
+            val c = html[i]
+            if (inStr) {
+                when {
+                    esc -> esc = false
+                    c == '\\' -> esc = true
+                    c == '"' -> inStr = false
+                }
+                continue
+            }
+            when (c) {
+                '"' -> inStr = true
                 '{' -> depth++
                 '}' -> {
                     depth--
@@ -112,17 +142,25 @@ object Parsers {
             }
         }
         // 今天/近7天/近30天：以 refDate 为基准，date 字符串直接比较（服务器已按天聚合）
+        aggregateCost(days.associate { it.date to it.total }, refDate)
+    }
+
+    /**
+     * 按参考日期聚合消费：today/7d/30d + 全部天。
+     * 纯函数，供 parseDeepSeekCost 与仓库聚合复用（跨月、超 7 天数据不截断）。
+     */
+    fun aggregateCost(dayMap: Map<String, Double>, refDate: LocalDate = LocalDate.now()): DeepSeekCost {
         var today = 0.0
         var d7 = 0.0
         var d30 = 0.0
         for (i in 0 until 30) {
             val key = refDate.minusDays(i.toLong()).toString()
-            val v = days.firstOrNull { it.date == key }?.total ?: 0.0
+            val v = dayMap[key] ?: 0.0
             if (i == 0) today = v
             if (i < 7) d7 += v
             d30 += v
         }
-        val recent = days.sortedByDescending { it.date }.take(7)
-        DeepSeekCost(today, d7, d30, recent)
+        val days = dayMap.entries.sortedByDescending { it.key }.map { DeepSeekCostDay(it.key, it.value) }
+        return DeepSeekCost(today, d7, d30, days)
     }
 }

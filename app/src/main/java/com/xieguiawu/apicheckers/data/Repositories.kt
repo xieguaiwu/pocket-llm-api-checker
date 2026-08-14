@@ -43,6 +43,7 @@ class DeepSeekRepo {
         val months = listOf(now, now.minusMonths(1))
         val dayMap = mutableMapOf<String, Double>()
         var tokenInvalid = false
+        var lastError: String? = null
         for (d in months) {
             val url = "https://platform.deepseek.com/api/v0/usage/cost?month=${d.monthValue}&year=${d.year}"
             val r = get(
@@ -56,48 +57,50 @@ class DeepSeekRepo {
                 authErrorMsg = "平台 Token 已失效，请更新平台 Token",
             )
             val raw: String = if (r.isFailure) {
-                if (r.exceptionOrNull()?.message?.contains("失效") == true) tokenInvalid = true
+                val msg = r.exceptionOrNull()?.message.orEmpty()
+                if (msg.contains("失效")) tokenInvalid = true
+                lastError = msg
                 continue
             } else r.getOrThrow()
             val parsed = Parsers.parseDeepSeekCost(raw)
             if (parsed.isFailure) {
                 // code 40003 等业务错误也标记 token 失效
-                if (parsed.exceptionOrNull()?.message?.contains("失效") == true) tokenInvalid = true
+                val msg = parsed.exceptionOrNull()?.message.orEmpty()
+                if (msg.contains("失效")) tokenInvalid = true
+                lastError = msg
                 continue
             }
             for (day in parsed.getOrThrow().days) {
                 dayMap[day.date] = (dayMap[day.date] ?: 0.0) + day.total
             }
         }
-        if (tokenInvalid && dayMap.isEmpty()) {
-            return Result.failure(Exception("DeepSeek 平台登录已失效，请更新平台 Token"))
+        // 两个月都无数据（含非认证错误）：显式失败，不返回误导性的零数据
+        if (dayMap.isEmpty()) {
+            val msg = when {
+                tokenInvalid -> "DeepSeek 平台登录已失效，请更新平台 Token"
+                lastError != null -> "消费数据获取失败：$lastError"
+                else -> "消费数据为空"
+            }
+            return Result.failure(Exception(msg))
         }
-        // 汇总窗口：以本地当天为基准
-        var today = 0.0
-        var d7 = 0.0
-        var d30 = 0.0
-        for (i in 0 until 30) {
-            val key = now.minusDays(i.toLong()).toString()
-            val v = dayMap[key] ?: 0.0
-            if (i == 0) today = v
-            if (i < 7) d7 += v
-            d30 += v
-        }
-        val days = dayMap.entries.sortedByDescending { it.key }.take(7).map { DeepSeekCostDay(it.key, it.value) }
-        return Result.success(DeepSeekCost(today, d7, d30, days))
+        return Result.success(Parsers.aggregateCost(dayMap, now))
     }
 }
 
 /** OpenCode 数据仓库：Go usage（官方 API）+ Zen billing（页面解析） */
 class OpenCodeRepo {
-    private suspend fun get(url: String, headers: Map<String, String>): Result<String> =
+    private suspend fun get(
+        url: String,
+        headers: Map<String, String>,
+        authErrorMsg: String = "Go API Key 无效或已过期",
+    ): Result<String> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val req = Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
                 val resp = ApiClient.client.newCall(req).execute()
                 val body = resp.body?.string().orEmpty()
                 when {
-                    resp.code == 401 || resp.code == 403 -> error("Go API Key 无效或已过期")
+                    resp.code == 401 || resp.code == 403 -> error(authErrorMsg)
                     !resp.isSuccessful -> error("HTTP ${resp.code}: ${body.take(200)}")
                     else -> body
                 }
@@ -116,6 +119,7 @@ class OpenCodeRepo {
                 "Cookie" to "auth=${account.authCookie}",
                 "User-Agent" to ApiClient.UA,
             ),
+            authErrorMsg = "Cookie 已过期，请更新 Auth Cookie",
         ).mapCatching { Parsers.parseZenBilling(it).getOrThrow() }
     }
 }

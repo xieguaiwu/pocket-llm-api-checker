@@ -66,15 +66,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(deepSeek = DeepSeekUi(keyConfigured = dk.isNotBlank()), accounts = accounts) }
     }
 
-    /** 刷新全部数据（DeepSeek + 所有账号） */
+    /** 刷新全部数据（DeepSeek + 所有账号，并行）。重入保护：刷新中忽略再次触发 */
     fun refreshAll() {
+        if (_ui.value.refreshing) return
         viewModelScope.launch {
             _ui.update { it.copy(refreshing = true) }
-            // 以本地存储为准重建账号列表（设置页新增/删除后立即生效）
-            val accounts = SecureSettings.getAccounts().map { AccountUi(it) }
-            _ui.update { it.copy(accounts = accounts) }
+            // 以本地存储为准重建账号列表（设置页新增/删除后立即生效）；
+            // 保留旧数据避免刷新期间界面闪断（P2-15）
+            val fresh = SecureSettings.getAccounts()
+            _ui.update { st ->
+                val merged = fresh.map { acc ->
+                    st.accounts.firstOrNull { it.account.id == acc.id }?.copy(account = acc) ?: AccountUi(acc)
+                }
+                st.copy(accounts = merged)
+            }
             refreshDeepSeekNow()
-            accounts.forEach { refreshAccountNow(it.account.id) }
+            // 并行刷新所有账号（3 账号 × 2 请求 ≈ 1 次网络延迟，而非串行 6 次）
+            kotlinx.coroutines.coroutineScope {
+                fresh.forEach { launch { refreshAccountNow(it.id) } }
+            }
             val now = System.currentTimeMillis()
             _ui.update { it.copy(refreshing = false, lastUpdated = now) }
             SecureSettings.setLastUpdate("all", now)
@@ -102,7 +112,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     keyConfigured = true,
                     balance = bal.getOrNull(),
                     cost = cost?.getOrNull(),
-                    error = bal.exceptionOrNull()?.message ?: cost?.exceptionOrNull()?.message,
+                    error = listOfNotNull(bal.exceptionOrNull()?.message, cost?.exceptionOrNull()?.message)
+                        .joinToString("\n").ifEmpty { null },
                 ),
             )
         }

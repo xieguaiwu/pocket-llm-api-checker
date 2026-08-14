@@ -4,7 +4,8 @@
     <application
         android:label="@string/app_name"
         android:theme="@style/Theme.ApiCheckers"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:allowBackup="false">
         <activity
             android:name=".MainActivity"
             android:exported="true">

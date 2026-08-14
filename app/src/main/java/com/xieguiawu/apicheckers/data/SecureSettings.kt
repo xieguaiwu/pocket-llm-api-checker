@@ -96,11 +96,34 @@ object SecureSettings {
         cipher = runCatching { AndroidKeystoreCipher() }.getOrNull()
     }
 
-    private fun enc(v: String): String = cipher?.let { runCatching { it.encrypt(v) }.getOrElse { v } } ?: v
+    /** 安全告警（加密失败 / 解密失败时置位），设置页展示提醒用户 */
+    var securityWarning: String? = null
+        private set
 
-    /** 解密失败（如历史明文数据 + Keystore 恢复）兜底返回原文，避免数据锁死 */
-    private fun dec(v: String): String =
-        if (v.isBlank()) "" else cipher?.let { c -> runCatching { c.decrypt(v) }.getOrElse { v } } ?: v
+    private fun enc(v: String): String {
+        if (v.isBlank()) return v
+        val c = cipher ?: return v
+        return runCatching { c.encrypt(v) }.getOrElse { e ->
+            securityWarning = "加密失败，凭据将以明文存储（${e.message}）"
+            v
+        }
+    }
+
+    /**
+     * 解密：格式无效（非 Base64/太短）→ 历史明文数据，原样返回；
+     * 其他失败（密钥损坏等）→ 返回原文避免锁死，但置位 securityWarning 提示用户重新输入。
+     */
+    private fun dec(v: String): String {
+        if (v.isBlank()) return ""
+        val c = cipher ?: return v
+        return runCatching { c.decrypt(v) }.getOrElse { e ->
+            if (e is IllegalArgumentException) v
+            else {
+                securityWarning = "凭据解密失败（${e.message}），请重新输入"
+                v
+            }
+        }
+    }
 
     // DeepSeek 凭据
     fun getDeepSeekKey(): String = dec(prefs.getString("deepseek_key", "") ?: "")

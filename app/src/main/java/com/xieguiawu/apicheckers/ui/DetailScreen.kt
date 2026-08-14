@@ -22,6 +22,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -39,6 +44,7 @@ import com.xieguiawu.apicheckers.ui.theme.TextMain
 import com.xieguiawu.apicheckers.ui.theme.TextSub
 import java.time.Duration
 import java.time.Instant
+import kotlinx.coroutines.delay
 
 // ── 账号详情页 ─────────────────────────────────────────────────
 
@@ -129,7 +135,7 @@ private fun WindowRow(label: String, w: GoWindow?) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(label, color = TextSub, fontSize = 13.sp, modifier = Modifier.width(100.dp))
-            Text(countdownText(w.resetsAt), color = TextSub, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            CountdownText(w.resetsAt, modifier = Modifier.weight(1f))
             Text("${w.percent}%", color = color, fontSize = 13.sp)
             if (rateLimited) {
                 Spacer(Modifier.width(6.dp))
@@ -140,10 +146,22 @@ private fun WindowRow(label: String, w: GoWindow?) {
     }
 }
 
-/** 重置倒计时：>1h「4小时20分后重置」；<1h「52分钟后重置」；已过期「即将重置」 */
-private fun countdownText(resetsAt: String): String {
+/** 重置倒计时：>1h「4小时20分后重置」；<1h「52分钟后重置」；已过期「即将重置」。每 30s 重算保持新鲜 */
+@Composable
+private fun CountdownText(resetsAt: String, modifier: Modifier = Modifier) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            now = System.currentTimeMillis()
+        }
+    }
+    Text(countdownText(resetsAt, now), color = TextSub, fontSize = 12.sp, modifier = modifier)
+}
+
+private fun countdownText(resetsAt: String, nowMs: Long): String {
     val instant = runCatching { Instant.parse(resetsAt) }.getOrNull() ?: return "即将重置"
-    val dur = Duration.between(Instant.now(), instant)
+    val dur = Duration.between(Instant.ofEpochMilli(nowMs), instant)
     if (dur.isNegative || dur.isZero) return "即将重置"
     val mins = dur.toMinutes()
     return when {

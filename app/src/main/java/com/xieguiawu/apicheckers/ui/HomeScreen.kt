@@ -255,12 +255,15 @@ private fun AccountCard(acc: AccountUi, onClick: () -> Unit) {
                         }
                     }
                     Row {
-                        val windows = listOf("R" to go.rolling, "W" to go.weekly, "M" to go.monthly)
-                            .filter { it.second != null }
+                        val windows = listOfNotNull(
+                            go.rolling?.let { "R" to it },
+                            go.weekly?.let { "W" to it },
+                            go.monthly?.let { "M" to it },
+                        )
                         windows.forEachIndexed { i, (label, w) ->
                             if (i > 0) Text(" · ", color = TextSub, fontSize = 13.sp)
                             Text(
-                                "$label ${w!!.percent}%",
+                                "$label ${w.percent}%",
                                 color = usageColor(w.percent, w.status == "rate-limited"),
                                 fontSize = 13.sp,
                             )

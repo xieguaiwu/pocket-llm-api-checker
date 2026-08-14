@@ -291,7 +291,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                                     val name = accName.trim().ifEmpty { "账号 ${accounts.size + 1}" }
                                     SecureSettings.saveAccount(
                                         Account(
-                                            id = System.currentTimeMillis().toString(),
+                                            id = java.util.UUID.randomUUID().toString(),
                                             name = name,
                                             goApiKey = key,
                                             workspaceId = accWorkspace.trim(),
@@ -356,8 +356,9 @@ private fun SectionCard(title: String, content: @Composable ColumnScope.() -> Un
     }
 }
 
-/** API key 尾号脱敏显示：sk-…4f3a */
+/** API key 尾号脱敏显示：sk-…4f3a；短 key（≤8 字符）整体掩码 */
 private fun keyTail(key: String): String {
+    if (key.length <= 8) return "••••"
     val tail = key.takeLast(4)
     return if (key.startsWith("sk-")) "sk-…$tail" else "…$tail"
 }
