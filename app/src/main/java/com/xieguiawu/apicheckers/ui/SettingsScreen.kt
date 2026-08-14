@@ -108,6 +108,15 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
             .safeDrawingPadding()
             .padding(horizontal = 20.dp),
     ) {
+        // 安全警告条（Keystore 加密失败/解密失败时显示）
+        SecureSettings.securityWarning?.let { warning ->
+            Text(
+                warning,
+                color = Danger,
+                fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            )
+        }
         // 顶栏
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),

@@ -127,10 +127,16 @@ object SecureSettings {
 
     // DeepSeek 凭据
     fun getDeepSeekKey(): String = dec(prefs.getString("deepseek_key", "") ?: "")
-    fun setDeepSeekKey(v: String) { prefs.edit().putString("deepseek_key", enc(v)).apply() }
+    fun setDeepSeekKey(v: String) {
+        prefs.edit().putString("deepseek_key", enc(v)).apply()
+        if (v.isBlank() || runCatching { dec(enc(v)) }.isSuccess) securityWarning = null
+    }
 
     fun getPlatformToken(): String = dec(prefs.getString("platform_token", "") ?: "")
-    fun setPlatformToken(v: String) { prefs.edit().putString("platform_token", enc(v)).apply() }
+    fun setPlatformToken(v: String) {
+        prefs.edit().putString("platform_token", enc(v)).apply()
+        if (v.isBlank() || runCatching { dec(enc(v)) }.isSuccess) securityWarning = null
+    }
 
     // OpenCode 账号（整体 JSON 加密存储）
     fun getAccounts(): List<Account> {
@@ -143,6 +149,7 @@ object SecureSettings {
         val idx = list.indexOfFirst { it.id == a.id }
         if (idx >= 0) list[idx] = a else list.add(a)
         prefs.edit().putString("accounts_json", enc(json.encodeToString(list))).apply()
+        if (runCatching { dec(enc(json.encodeToString(list))) }.isSuccess) securityWarning = null
     }
 
     fun deleteAccount(id: String) {
