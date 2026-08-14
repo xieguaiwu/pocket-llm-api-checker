@@ -5,7 +5,7 @@ API Checkers — 极简深色 Android app，查看 DeepSeek API 与 OpenCode（Z
 
 ## 最后一次完成的工作（2026-08-14）
 - 全功能实现：数据层（解析器/仓库/加密存储）+ UI 层（总览/详情/设置）+ 18 个单元测试全绿 + `app-debug.apk` 构建成功（16.7MB）
-- momus 审查 1 轮（1 P0 + 10 P1 + 20 P2）→ 全部 P0/P1 + 精选 P2 已修复（commit 5ebbb9a），复验进行中
+- momus 审查 2 轮：第 1 轮 1 P0 + 10 P1 + 20 P2 → 全部修复；第 2 轮复验「可发布」（securityWarning UI 已闭环）
 - 文档：README.md + README_zh.md 双语、CONTEXT 本文档
 
 ## 遗留问题 / 待办
@@ -25,4 +25,4 @@ API Checkers — 极简深色 Android app，查看 DeepSeek API 与 OpenCode（Z
 - graphify-out/: 不存在（项目未建；如需可 `graphify update . --no-llm`）
 
 ## 最后更新时间
-2026-08-14 22:20
+2026-08-14 22:40
