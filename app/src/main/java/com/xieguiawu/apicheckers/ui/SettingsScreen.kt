@@ -459,6 +459,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                         if (newName.isNotBlank()) {
                             SecureSettings.saveAccount(acc.copy(name = newName))
                             accounts = SecureSettings.getAccounts()
+                            vm.refreshAll()
                             flashHint("已重命名为「${newName}」")
                         }
                         renaming = null
@@ -492,6 +493,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                         if (newName.isNotBlank()) {
                             SecureSettings.saveDeepSeekAccount(acc.copy(name = newName))
                             dsAccounts = SecureSettings.getDeepSeekAccounts()
+                            vm.refreshAll()
                             flashHint("已重命名为「${newName}」")
                         }
                         renamingDs = null

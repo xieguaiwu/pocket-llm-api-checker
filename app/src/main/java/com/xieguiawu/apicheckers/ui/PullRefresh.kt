@@ -3,6 +3,8 @@ package com.xieguiawu.apicheckers.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -26,7 +28,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xieguiawu.apicheckers.ui.theme.Accent
@@ -37,30 +42,18 @@ import kotlin.math.min
 
 // ── 纯决策逻辑（可 JVM 单测）─────────────────────────────────
 
-/** 下拉刷新决策结果 */
-enum class PullAction { None, Refresh, Reset }
-
 /**
- * 下拉刷新决策：给定「手指静止时长 / 下拉偏移 / 阈值 / 刷新中状态」决定动作。
- * - 刷新中 → None（等待刷新完成）
- * - 手指仍在拖动（静止 < releaseMs）→ None
- * - 静止 ≥ holdMs 且偏移 ≥ 阈值 → Refresh（保持几秒自动刷新，无需松手）
- * - 已松手（静止 ≥ releaseMs）且偏移 ≥ 阈值 → Refresh（标准松手刷新）
- * - 已松手且偏移 < 阈值 → Reset（未达阈值，平滑复位）
+ * 保持自动刷新判定（轮询真实生产逻辑）：
+ * 手指按住不动（静止 ≥ [holdMs]）且下拉偏移 ≥ 阈值且未在刷新中 → 应自动触发刷新。
+ * 松手判定由 pointerInput 的 up 事件负责，不在此函数内。
  */
-fun decidePullAction(
+fun shouldAutoRefreshWhileHeld(
     idleMs: Long,
     pullOffset: Float,
     thresholdPx: Float,
     isRefreshing: Boolean,
     holdMs: Long = 2500,
-    releaseMs: Long = 500,
-): PullAction {
-    if (isRefreshing) return PullAction.None
-    if (idleMs < releaseMs) return PullAction.None // 手指仍在拖动
-    if (pullOffset >= thresholdPx) return PullAction.Refresh
-    return PullAction.Reset
-}
+): Boolean = !isRefreshing && idleMs >= holdMs && pullOffset >= thresholdPx
 
 // ── 下拉刷新容器 ──────────────────────────────────────────────
 
@@ -100,7 +93,7 @@ fun PullRefreshContainer(
         }
     }
 
-    // 松手判定（供 onPostScroll 与轮询共用）：达阈值触发刷新，未达阈值复位
+    // 松手判定（pointerInput up 事件 / onPostFling 调用）：达阈值触发刷新，未达阈值复位
     fun onDragEnded() {
         if (refreshing) return
         if (pullOffset >= thresholdPx) refreshAction()
@@ -112,7 +105,7 @@ fun PullRefreshContainer(
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 val dy = available.y
                 // 手指下拉（dy>0）且未到最大下拉距离
-                if (dy > 0 && source == NestedScrollSource.Drag && pullOffset < maxPullPx) {
+                if (dy > 0 && source == NestedScrollSource.UserInput && pullOffset < maxPullPx) {
                     val consumed = min(dy, maxPullPx - pullOffset)
                     pullOffset += consumed
                     lastDragAt = android.os.SystemClock.uptimeMillis()
@@ -127,10 +120,10 @@ fun PullRefreshContainer(
                 return Offset.Zero
             }
 
-            override suspend fun onPostFling(consumed: androidx.compose.ui.unit.Velocity, available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
                 // 有速度的松手（fling 结束）：立即判定刷新/复位
                 if (pullOffset > 0f) onDragEnded()
-                return androidx.compose.ui.unit.Velocity.Zero
+                return Velocity.Zero
             }
         }
     }
@@ -141,13 +134,9 @@ fun PullRefreshContainer(
             delay(200)
             if (pullOffset <= 0f) continue
             val idle = android.os.SystemClock.uptimeMillis() - lastDragAt
-            // 松手判定（无速度松手兜底，300ms）：达阈值刷新 / 未达阈值复位
-            if (idle >= 300 && !refreshing) {
-                if (pullOffset >= thresholdPx) refreshAction()
-                else if (pullOffset > 0f) resetPull()
-            }
-            // 保持触发：静止 ≥ 2.5s 且达阈值（无需松手，用户需求）
-            if (idle >= 2500 && !refreshing && pullOffset >= thresholdPx) {
+            // 保持触发：手指按住不动 ≥ 2.5s 且达阈值（无需松手）。
+            // 松手判定由下方 pointerInput 的 up 事件即时处理，此处不重复。
+            if (shouldAutoRefreshWhileHeld(idle, pullOffset, thresholdPx, refreshing)) {
                 refreshAction()
             }
         }
@@ -161,7 +150,23 @@ fun PullRefreshContainer(
         }
     }
 
-    Box(modifier = modifier.nestedScroll(connection)) {
+    Box(
+        modifier = modifier
+            .nestedScroll(connection)
+            .pointerInput(Unit) {
+                // 松手检测：观察手指抬起（不消费事件，不影响 LazyColumn 滚动）
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        if (event.changes.all { it.changedToUp() }) {
+                            if (pullOffset > 0f) onDragEnded()
+                            break
+                        }
+                    } while (true)
+                }
+            },
+    ) {
         content()
 
         val show = pullOffset > 0f || refreshing
@@ -182,7 +187,7 @@ fun PullRefreshContainer(
                     modifier = Modifier.padding(horizontal = 8.dp),
                     color = Accent,
                     strokeWidth = 2.dp,
-                    progress = if (refreshing) 0.75f else 0f,
+                    progress = { if (refreshing) 0.75f else 0f },
                 )
                 Text(
                     if (refreshing) "刷新中…" else "下拉刷新 · 保持 2.5 秒自动刷新",

@@ -99,10 +99,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 刷新全部 DeepSeek 账号的余额 + 消费明细 */
+    /** 刷新全部 DeepSeek 账号：先重建列表（添加/删除后生效），再并行刷新 */
     fun refreshDeepSeek() {
         viewModelScope.launch {
-            SecureSettings.getDeepSeekAccounts().forEach { launch { refreshDeepSeekNow(it.id) } }
+            val freshDs = SecureSettings.getDeepSeekAccounts()
+            _ui.update { st ->
+                val dsMerged = freshDs.map { acc ->
+                    st.deepSeekList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: DeepSeekUi(account = acc)
+                }
+                st.copy(deepSeekList = dsMerged)
+            }
+            kotlinx.coroutines.coroutineScope {
+                freshDs.forEach { launch { refreshDeepSeekNow(it.id) } }
+            }
         }
     }
 
