@@ -26,7 +26,8 @@ API Checkers — 极简深色 Android app，查看 DeepSeek API 与 OpenCode（Z
 - **UI**：9 色纯色板（见 Theme.kt），无 Material 默认色泄漏；单 ViewModel（Activity 级共享）
 
 ## 知识图谱
-- graphify-out/: 不存在（项目未建；如需可 `graphify update . --no-llm`）
+- graphify-out/: 存在（2026-08-15 构建：199 nodes / 305 edges / 18 communities；God Nodes: AppViewModel 15、SecureSettings 15、HomeScreen 8、shouldAutoRefreshWhileHeld 8；无 import cycle）
+- 图谱不入库（.gitignore）；代码变更后运行 `graphify update .` 重建（无 API 成本）
 
 ## 最后更新时间
-2026-08-14 23:00
+2026-08-15 12:10
