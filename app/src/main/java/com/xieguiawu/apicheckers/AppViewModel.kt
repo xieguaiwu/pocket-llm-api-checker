@@ -3,6 +3,7 @@ package com.xieguiawu.apicheckers
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.xieguiawu.apicheckers.data.DeepSeekAccount
 import com.xieguiawu.apicheckers.data.DeepSeekBalance
 import com.xieguiawu.apicheckers.data.DeepSeekCost
 import com.xieguiawu.apicheckers.data.DeepSeekRepo
@@ -19,13 +20,16 @@ import kotlinx.coroutines.launch
 
 // ── UI 状态模型 ────────────────────────────────────────────────
 
-/** DeepSeek 区块 UI 状态 */
+/** 单个 DeepSeek 账号的 UI 状态 */
 data class DeepSeekUi(
-    val keyConfigured: Boolean = false,
+    val account: DeepSeekAccount? = null,
     val balance: DeepSeekBalance? = null,
     val cost: DeepSeekCost? = null,
     val error: String? = null,
-)
+    val loading: Boolean = false,
+) {
+    val keyConfigured: Boolean get() = account?.apiKey?.isNotBlank() == true
+}
 
 /** 单个 OpenCode 账号的 UI 状态 */
 data class AccountUi(
@@ -38,7 +42,7 @@ data class AccountUi(
 
 /** 全局 UI 状态 */
 data class UiState(
-    val deepSeek: DeepSeekUi = DeepSeekUi(),
+    val deepSeekList: List<DeepSeekUi> = emptyList(),
     val accounts: List<AccountUi> = emptyList(),
     val refreshing: Boolean = false,
     val lastUpdated: Long = 0L,
@@ -61,9 +65,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 从本地存储恢复界面骨架（不发起网络） */
     private fun loadFromCache() {
-        val dk = SecureSettings.getDeepSeekKey()
+        val dsAccounts = SecureSettings.getDeepSeekAccounts().map { DeepSeekUi(account = it) }
         val accounts = SecureSettings.getAccounts().map { AccountUi(it) }
-        _ui.update { it.copy(deepSeek = DeepSeekUi(keyConfigured = dk.isNotBlank()), accounts = accounts) }
+        _ui.update { it.copy(deepSeekList = dsAccounts, accounts = accounts) }
     }
 
     /** 刷新全部数据（DeepSeek + 所有账号，并行）。重入保护：刷新中忽略再次触发 */
@@ -73,16 +77,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(refreshing = true) }
             // 以本地存储为准重建账号列表（设置页新增/删除后立即生效）；
             // 保留旧数据避免刷新期间界面闪断（P2-15）
+            val freshDs = SecureSettings.getDeepSeekAccounts()
             val fresh = SecureSettings.getAccounts()
             _ui.update { st ->
+                val dsMerged = freshDs.map { acc ->
+                    st.deepSeekList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: DeepSeekUi(account = acc)
+                }
                 val merged = fresh.map { acc ->
                     st.accounts.firstOrNull { it.account.id == acc.id }?.copy(account = acc) ?: AccountUi(acc)
                 }
-                st.copy(accounts = merged)
+                st.copy(deepSeekList = dsMerged, accounts = merged)
             }
-            refreshDeepSeekNow()
-            // 并行刷新所有账号（3 账号 × 2 请求 ≈ 1 次网络延迟，而非串行 6 次）
+            // 并行刷新所有 DeepSeek 账号与 OpenCode 账号
             kotlinx.coroutines.coroutineScope {
+                freshDs.forEach { launch { refreshDeepSeekNow(it.id) } }
                 fresh.forEach { launch { refreshAccountNow(it.id) } }
             }
             val now = System.currentTimeMillis()
@@ -91,31 +99,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 刷新 DeepSeek 余额 + 消费明细 */
+    /** 刷新全部 DeepSeek 账号的余额 + 消费明细 */
     fun refreshDeepSeek() {
-        viewModelScope.launch { refreshDeepSeekNow() }
+        viewModelScope.launch {
+            SecureSettings.getDeepSeekAccounts().forEach { launch { refreshDeepSeekNow(it.id) } }
+        }
     }
 
-    private suspend fun refreshDeepSeekNow() {
-        val key = SecureSettings.getDeepSeekKey()
-        if (key.isBlank()) {
-            _ui.update { it.copy(deepSeek = DeepSeekUi(keyConfigured = false, error = "未配置 DeepSeek API Key")) }
-            return
+    private suspend fun refreshDeepSeekNow(id: String) {
+        val acc = SecureSettings.getDeepSeekAccounts().firstOrNull { it.id == id } ?: return
+        _ui.update { st ->
+            st.copy(deepSeekList = st.deepSeekList.map {
+                if (it.account?.id == id) it.copy(loading = true, error = null) else it
+            })
         }
-        _ui.update { it.copy(deepSeek = it.deepSeek.copy(keyConfigured = true, error = null)) }
-        val bal = deepSeekRepo.balance(key)
-        val token = SecureSettings.getPlatformToken()
-        val cost = if (token.isNotBlank()) deepSeekRepo.cost(token) else null
-        _ui.update {
-            it.copy(
-                deepSeek = DeepSeekUi(
-                    keyConfigured = true,
+        val bal = deepSeekRepo.balance(acc.apiKey)
+        val cost = if (acc.hasToken) deepSeekRepo.cost(acc.platformToken) else null
+        _ui.update { st ->
+            st.copy(deepSeekList = st.deepSeekList.map {
+                if (it.account?.id == id) DeepSeekUi(
+                    account = acc,
                     balance = bal.getOrNull(),
                     cost = cost?.getOrNull(),
                     error = listOfNotNull(bal.exceptionOrNull()?.message, cost?.exceptionOrNull()?.message)
                         .joinToString("\n").ifEmpty { null },
-                ),
-            )
+                    loading = false,
+                ) else it
+            })
         }
     }
 

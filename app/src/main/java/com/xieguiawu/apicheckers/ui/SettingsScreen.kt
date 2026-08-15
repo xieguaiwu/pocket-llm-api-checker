@@ -65,11 +65,15 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
-    // DeepSeek 凭据（初始值从加密存储读取）
-    var dsKey by remember { mutableStateOf(SecureSettings.getDeepSeekKey()) }
-    var dsToken by remember { mutableStateOf(SecureSettings.getPlatformToken()) }
+    // DeepSeek 账号（多 key）
+    var dsAccounts by remember { mutableStateOf(SecureSettings.getDeepSeekAccounts()) }
+    var dsEditing by remember { mutableStateOf(false) }
+    var dsName by remember { mutableStateOf("") }
+    var dsApiKey by remember { mutableStateOf("") }
+    var dsToken by remember { mutableStateOf("") }
     var showDsKey by remember { mutableStateOf(false) }
     var showDsToken by remember { mutableStateOf(false) }
+    var renamingDs by remember { mutableStateOf<com.xieguiawu.apicheckers.data.DeepSeekAccount?>(null) }
     // OpenCode 账号
     var accounts by remember { mutableStateOf(SecureSettings.getAccounts()) }
     var renaming by remember { mutableStateOf<com.xieguiawu.apicheckers.data.Account?>(null) }
@@ -146,58 +150,128 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
 
             // ── DeepSeek 分区 ──
             item(key = "deepseek") {
-                SectionCard("DeepSeek") {
-                    OutlinedTextField(
-                        value = dsKey,
-                        onValueChange = { dsKey = it },
-                        label = { Text("DeepSeek API Key") },
-                        singleLine = true,
-                        colors = fieldColors,
-                        visualTransformation = if (showDsKey) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton(onClick = { showDsKey = !showDsKey }) {
-                                Icon(
-                                    if (showDsKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                                    contentDescription = if (showDsKey) "隐藏" else "显示",
-                                    tint = TextSub,
+                SectionCard("DeepSeek 账号") {
+                    if (dsAccounts.isEmpty()) {
+                        Text("暂无 DeepSeek 账号", color = TextSub, fontSize = 13.sp)
+                    }
+                    dsAccounts.forEach { acc ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(acc.name, color = TextMain, fontSize = 14.sp)
+                                Text(
+                                    keyTail(acc.apiKey) + if (acc.hasToken) " · 消费" else "",
+                                    color = TextSub,
+                                    fontSize = 12.sp,
                                 )
                             }
-                        },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = dsToken,
-                        onValueChange = { dsToken = it },
-                        label = { Text("DeepSeek 平台 Token（可选）") },
-                        singleLine = true,
-                        colors = fieldColors,
-                        visualTransformation = if (showDsToken) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton(onClick = { showDsToken = !showDsToken }) {
-                                Icon(
-                                    if (showDsToken) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                                    contentDescription = if (showDsToken) "隐藏" else "显示",
-                                    tint = TextSub,
-                                )
+                            IconButton(onClick = {
+                                renamingDs = acc
+                                renameText = acc.name
+                            }) {
+                                Icon(Icons.Filled.Edit, contentDescription = "重命名 DeepSeek 账号", tint = TextSub)
                             }
-                        },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Text(
-                        "登录 platform.deepseek.com 后，DevTools → Network → 任意 api/v0 请求的 Authorization 头。" +
-                            "用于查看消费明细，几天到几周后会过期。",
-                        color = TextSub,
-                        fontSize = 12.sp,
-                    )
-                    Button(onClick = {
-                        SecureSettings.setDeepSeekKey(dsKey.trim())
-                        SecureSettings.setPlatformToken(dsToken.trim())
-                        vm.refreshDeepSeek()
-                        flashHint("已保存，正在刷新 DeepSeek 数据")
-                    }) {
-                        Text("保存 DeepSeek 配置")
+                            IconButton(onClick = {
+                                SecureSettings.deleteDeepSeekAccount(acc.id)
+                                dsAccounts = SecureSettings.getDeepSeekAccounts()
+                                vm.refreshDeepSeek()
+                                flashHint("已删除「${acc.name}」")
+                            }) {
+                                Icon(Icons.Filled.Delete, contentDescription = "删除 DeepSeek 账号", tint = Danger)
+                            }
+                        }
+                    }
+
+                    if (dsEditing) {
+                        HorizontalDivider(color = Divider, modifier = Modifier.padding(vertical = 4.dp))
+                        OutlinedTextField(
+                            value = dsName,
+                            onValueChange = { dsName = it },
+                            label = { Text("名称") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = dsApiKey,
+                            onValueChange = { dsApiKey = it },
+                            label = { Text("DeepSeek API Key") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            visualTransformation = if (showDsKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showDsKey = !showDsKey }) {
+                                    Icon(
+                                        if (showDsKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                        contentDescription = if (showDsKey) "隐藏" else "显示",
+                                        tint = TextSub,
+                                    )
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = dsToken,
+                            onValueChange = { dsToken = it },
+                            label = { Text("平台 Token（可选，看消费明细）") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            visualTransformation = if (showDsToken) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showDsToken = !showDsToken }) {
+                                    Icon(
+                                        if (showDsToken) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                        contentDescription = if (showDsToken) "隐藏" else "显示",
+                                        tint = TextSub,
+                                    )
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "Token 获取：登录 platform.deepseek.com → DevTools → Network → 任意 api/v0 请求的 Authorization 头。几天到几周后过期。",
+                            color = TextSub,
+                            fontSize = 12.sp,
+                        )
+                        Row {
+                            Button(onClick = {
+                                val key = dsApiKey.trim()
+                                if (key.isBlank()) {
+                                    flashHint("API Key 不能为空")
+                                } else {
+                                    val name = dsName.trim().ifEmpty { "DeepSeek ${dsAccounts.size + 1}" }
+                                    SecureSettings.saveDeepSeekAccount(
+                                        com.xieguiawu.apicheckers.data.DeepSeekAccount(
+                                            id = java.util.UUID.randomUUID().toString(),
+                                            name = name,
+                                            apiKey = key,
+                                            platformToken = dsToken.trim(),
+                                        ),
+                                    )
+                                    dsAccounts = SecureSettings.getDeepSeekAccounts()
+                                    vm.refreshDeepSeek()
+                                    dsEditing = false
+                                    dsName = ""; dsApiKey = ""; dsToken = ""
+                                    flashHint("已添加「$name」")
+                                }
+                            }) { Text("保存") }
+                            TextButton(onClick = { dsEditing = false }) {
+                                Text("取消", color = TextSub)
+                            }
+                        }
+                    } else {
+                        TextButton(onClick = {
+                            dsEditing = true
+                            dsName = "DeepSeek ${dsAccounts.size + 1}"
+                        }) {
+                            Icon(Icons.Filled.Add, contentDescription = null, tint = Accent)
+                            Spacer(Modifier.width(4.dp))
+                            Text("添加 DeepSeek 账号", color = Accent, fontSize = 14.sp)
+                        }
                     }
                 }
             }
@@ -220,6 +294,12 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                                     color = TextSub,
                                     fontSize = 12.sp,
                                 )
+                            }
+                            IconButton(onClick = {
+                                renaming = acc
+                                renameText = acc.name
+                            }) {
+                                Icon(Icons.Filled.Edit, contentDescription = "重命名账号", tint = TextSub)
                             }
                             IconButton(onClick = {
                                 SecureSettings.deleteAccount(acc.id)
@@ -386,6 +466,39 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                 },
                 dismissButton = {
                     TextButton(onClick = { renaming = null }) { Text("取消", color = TextSub) }
+                },
+            )
+        }
+
+        // DeepSeek 账号重命名对话框
+        renamingDs?.let { acc ->
+            AlertDialog(
+                onDismissRequest = { renamingDs = null },
+                containerColor = Card,
+                titleContentColor = TextMain,
+                textContentColor = TextMain,
+                title = { Text("重命名 DeepSeek 账号") },
+                text = {
+                    OutlinedTextField(
+                        value = renameText,
+                        onValueChange = { renameText = it },
+                        singleLine = true,
+                        colors = fieldColors,
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val newName = renameText.trim()
+                        if (newName.isNotBlank()) {
+                            SecureSettings.saveDeepSeekAccount(acc.copy(name = newName))
+                            dsAccounts = SecureSettings.getDeepSeekAccounts()
+                            flashHint("已重命名为「${newName}」")
+                        }
+                        renamingDs = null
+                    }) { Text("保存") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { renamingDs = null }) { Text("取消", color = TextSub) }
                 },
             )
         }

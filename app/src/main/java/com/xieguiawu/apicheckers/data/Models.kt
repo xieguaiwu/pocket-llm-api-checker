@@ -69,6 +69,15 @@ data class DeepSeekCost(
 
 // ── 账号 ───────────────────────────────────────────────────────
 
+/** DeepSeek 账号（支持多个 API key，各自查看余额/消费） */
+@Serializable
+data class DeepSeekAccount(
+    val id: String,
+    val name: String,
+    val apiKey: String,
+    val platformToken: String = "",
+) { val hasToken: Boolean get() = platformToken.isNotBlank() }
+
 @Serializable
 data class Account(
     val id: String,

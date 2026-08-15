@@ -94,6 +94,26 @@ object SecureSettings {
         if (::prefs.isInitialized) return
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         cipher = runCatching { AndroidKeystoreCipher() }.getOrNull()
+        migrateLegacyDeepSeek()
+    }
+
+    /** v1 迁移：旧版单 key 配置（deepseek_key/platform_token）→ 首个 DeepSeek 账号 */
+    private fun migrateLegacyDeepSeek() {
+        if (prefs.contains("deepseek_key") || prefs.contains("platform_token")) {
+            val oldKey = dec(prefs.getString("deepseek_key", "") ?: "")
+            val oldToken = dec(prefs.getString("platform_token", "") ?: "")
+            if (oldKey.isNotBlank() && getDeepSeekAccounts().isEmpty()) {
+                saveDeepSeekAccount(
+                    DeepSeekAccount(
+                        id = java.util.UUID.randomUUID().toString(),
+                        name = "DeepSeek",
+                        apiKey = oldKey,
+                        platformToken = oldToken,
+                    ),
+                )
+            }
+            prefs.edit().remove("deepseek_key").remove("platform_token").apply()
+        }
     }
 
     /** 安全告警（加密失败 / 解密失败时置位），设置页展示提醒用户 */
@@ -125,17 +145,23 @@ object SecureSettings {
         }
     }
 
-    // DeepSeek 凭据
-    fun getDeepSeekKey(): String = dec(prefs.getString("deepseek_key", "") ?: "")
-    fun setDeepSeekKey(v: String) {
-        prefs.edit().putString("deepseek_key", enc(v)).apply()
-        if (v.isBlank() || runCatching { dec(enc(v)) }.isSuccess) securityWarning = null
+    // DeepSeek 账号（多 key，整体 JSON 加密存储）
+    fun getDeepSeekAccounts(): List<DeepSeekAccount> {
+        val raw = prefs.getString("deepseek_accounts_json", "[]") ?: "[]"
+        return runCatching { json.decodeFromString<List<DeepSeekAccount>>(dec(raw)) }.getOrDefault(emptyList())
     }
 
-    fun getPlatformToken(): String = dec(prefs.getString("platform_token", "") ?: "")
-    fun setPlatformToken(v: String) {
-        prefs.edit().putString("platform_token", enc(v)).apply()
-        if (v.isBlank() || runCatching { dec(enc(v)) }.isSuccess) securityWarning = null
+    fun saveDeepSeekAccount(a: DeepSeekAccount) {
+        val list = getDeepSeekAccounts().toMutableList()
+        val idx = list.indexOfFirst { it.id == a.id }
+        if (idx >= 0) list[idx] = a else list.add(a)
+        prefs.edit().putString("deepseek_accounts_json", enc(json.encodeToString(list))).apply()
+        if (runCatching { dec(enc(json.encodeToString(list))) }.isSuccess) securityWarning = null
+    }
+
+    fun deleteDeepSeekAccount(id: String) {
+        val list = getDeepSeekAccounts().filterNot { it.id == id }
+        prefs.edit().putString("deepseek_accounts_json", enc(json.encodeToString(list))).apply()
     }
 
     // OpenCode 账号（整体 JSON 加密存储）

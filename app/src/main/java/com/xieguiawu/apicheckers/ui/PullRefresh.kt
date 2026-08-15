@@ -100,6 +100,13 @@ fun PullRefreshContainer(
         }
     }
 
+    // 松手判定（供 onPostScroll 与轮询共用）：达阈值触发刷新，未达阈值复位
+    fun onDragEnded() {
+        if (refreshing) return
+        if (pullOffset >= thresholdPx) refreshAction()
+        else if (pullOffset > 0f) resetPull()
+    }
+
     val connection = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
@@ -111,7 +118,19 @@ fun PullRefreshContainer(
                     lastDragAt = android.os.SystemClock.uptimeMillis()
                     return Offset(0f, consumed)
                 }
+                // 上滑且指示器未复位：消费上滑、立即复位指示器（内容不跳动）
+                if (dy < 0 && pullOffset > 0f) {
+                    val consumed = min(-dy, pullOffset)
+                    pullOffset -= consumed
+                    return Offset(0f, -consumed)
+                }
                 return Offset.Zero
+            }
+
+            override suspend fun onPostFling(consumed: androidx.compose.ui.unit.Velocity, available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+                // 有速度的松手（fling 结束）：立即判定刷新/复位
+                if (pullOffset > 0f) onDragEnded()
+                return androidx.compose.ui.unit.Velocity.Zero
             }
         }
     }
@@ -122,10 +141,14 @@ fun PullRefreshContainer(
             delay(200)
             if (pullOffset <= 0f) continue
             val idle = android.os.SystemClock.uptimeMillis() - lastDragAt
-            when (decidePullAction(idle, pullOffset, thresholdPx, refreshing)) {
-                PullAction.Refresh -> refreshAction()
-                PullAction.Reset -> resetPull()
-                PullAction.None -> Unit
+            // 松手判定（无速度松手兜底，300ms）：达阈值刷新 / 未达阈值复位
+            if (idle >= 300 && !refreshing) {
+                if (pullOffset >= thresholdPx) refreshAction()
+                else if (pullOffset > 0f) resetPull()
+            }
+            // 保持触发：静止 ≥ 2.5s 且达阈值（无需松手，用户需求）
+            if (idle >= 2500 && !refreshing && pullOffset >= thresholdPx) {
+                refreshAction()
             }
         }
     }
@@ -142,10 +165,14 @@ fun PullRefreshContainer(
         content()
 
         val show = pullOffset > 0f || refreshing
-        AnimatedVisibility(visible = show, enter = fadeIn(), exit = fadeOut()) {
+        AnimatedVisibility(
+            visible = show,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) {
             Column(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
                     .offset(y = with(density) { (pullOffset * 0.5f).toDp() })
                     .padding(top = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,

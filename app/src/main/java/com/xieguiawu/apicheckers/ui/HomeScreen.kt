@@ -153,7 +153,25 @@ fun HomeScreen(vm: AppViewModel, onOpenAccount: (String) -> Unit, onOpenSettings
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(bottom = 24.dp),
         ) {
-            item(key = "deepseek") { DeepSeekCard(ui.deepSeek) }
+            if (ui.deepSeekList.isEmpty()) {
+                item(key = "deepseek-empty") {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Card),
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Text(
+                            "未配置 DeepSeek API Key，点击「设置」添加",
+                            color = TextSub,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
+                }
+            }
+            items(ui.deepSeekList, key = { it.account?.id ?: "ds-none" }) { ds ->
+                DeepSeekCard(ds, onClick = onOpenSettings)
+            }
             if (ui.accounts.isEmpty()) {
                 item(key = "empty") { EmptyAccountsCard() }
             }
@@ -174,9 +192,9 @@ fun HomeScreen(vm: AppViewModel, onOpenAccount: (String) -> Unit, onOpenSettings
 
 /** DeepSeek 卡片：状态点 + 余额大字 + 充值/赠送 + 消费明细 */
 @Composable
-private fun DeepSeekCard(ds: DeepSeekUi) {
+private fun DeepSeekCard(ds: DeepSeekUi, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = Card),
         shape = RoundedCornerShape(10.dp),
     ) {
@@ -193,7 +211,7 @@ private fun DeepSeekCard(ds: DeepSeekUi) {
                 Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "DeepSeek",
+                    ds.account?.name ?: "DeepSeek",
                     color = TextMain,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
