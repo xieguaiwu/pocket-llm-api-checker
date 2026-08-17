@@ -1,11 +1,11 @@
 # CONTEXT_FOR_NEXT_AGENT.md
 
 ## 项目当前状态
-API Checkers — 极简深色 Android app，查看 DeepSeek API 与 OpenCode（Zen + Go 两个 plan）用量，OpenCode 支持 3 账号区分。**开发完成，公开 repo：https://github.com/xieguaiwu/api-checkers，待真机冒烟测试。**
+API Checkers — 极简深色 Android app，查看 DeepSeek API 与 OpenCode（Zen + Go 两个 plan）用量，OpenCode 支持 3 账号区分。**开发完成，公开 repo：https://github.com/xieguaiwu/pocket-llm-api-checker，待真机冒烟测试。**
 
 ## 最后一次完成的工作（2026-08-14 23:00）
 - v2 功能：账号重命名（设置页 Edit 按钮 + 对话框）、下拉保持 2.5s 自动全部刷新（自定义 PullRefreshContainer + decidePullAction 纯逻辑 7 单测）；25 测试全绿
-- GitHub 公开 repo 发布：https://github.com/xieguaiwu/api-checkers（MIT LICENSE + 双语 README + .kotlin/ 忽略清理）
+- GitHub 公开 repo 发布：https://github.com/xieguaiwu/pocket-llm-api-checker（MIT LICENSE + 双语 README + .kotlin/ 忽略清理）
 
 ## 已完成的工作（2026-08-14 早）
 - 全功能实现：数据层（解析器/仓库/加密存储）+ UI 层（总览/详情/设置）+ 18 个单元测试全绿 + `app-debug.apk` 构建成功（16.7MB）
