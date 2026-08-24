@@ -1,0 +1,3 @@
+Initial release: DeepSeek balance and spend, OpenCode Go
+and Zen usage, multi-account support, AES-GCM encrypted
+credentials.

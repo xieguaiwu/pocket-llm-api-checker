@@ -1,0 +1,29 @@
+Check your DeepSeek and OpenCode (Zen + Go) usage right
+from your phone.
+
+Features:
+- DeepSeek: account balance (total / topped-up / granted)
+  and spend statistics (today / 7-day / 30-day, with a
+  daily breakdown; spend stats need an optional platform
+  token)
+- OpenCode Go plan: rolling 5h / weekly / monthly usage
+  windows with reset countdowns and rate-limit status
+- OpenCode Zen plan: balance, monthly spend and limit,
+  auto-reload settings
+- Multiple accounts: add, rename and delete DeepSeek and
+  OpenCode accounts freely
+- Pull-to-refresh and auto-refresh every 5 minutes
+- Minimal dark UI with a single accent color, no clutter
+- Secure by default: every API key, cookie and token is
+  encrypted with the Android Keystore (AES-GCM) before it
+  is stored; nothing is hardcoded or logged
+
+Privacy: no ads, no trackers, no telemetry. The only
+network traffic is direct requests to the DeepSeek and
+opencode.ai services that you configure.
+
+Note: this app is a client for the proprietary DeepSeek
+and OpenCode network services. It reads usage data from
+their official APIs and pages, which may change over time.
+
+License: MIT. Source code on GitHub.

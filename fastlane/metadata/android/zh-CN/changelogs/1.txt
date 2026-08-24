@@ -1,0 +1,2 @@
+首个版本：DeepSeek 余额与消费、OpenCode Go/Zen 用量、
+多账号支持、AES-GCM 加密凭据。

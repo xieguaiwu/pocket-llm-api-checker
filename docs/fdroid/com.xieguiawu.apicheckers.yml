@@ -1,0 +1,31 @@
+# F-Droid 收录 metadata 草稿
+# 提交位置：gitlab.com/fdroid/fdroiddata → metadata/com.xieguiawu.apicheckers.yml
+# 流程：fork fdroiddata → 新建该文件 → MR（GitLab CI 自动 lint + build 验证）
+# 说明：Summary/Description 由仓库内 fastlane 元数据自动带入，此处不重复。
+#       NonFreeNet：应用依赖 DeepSeek/opencode.ai 专有网络服务（不阻止收录）。
+
+Categories:
+  - System
+License: MIT
+AuthorName: xieguaiwu
+SourceCode: https://github.com/xieguaiwu/pocket-llm-api-checker
+IssueTracker: https://github.com/xieguaiwu/pocket-llm-api-checker/issues
+Changelog: https://github.com/xieguaiwu/pocket-llm-api-checker/releases
+
+AutoName: API Checkers
+
+RepoType: git
+Repo: https://github.com/xieguaiwu/pocket-llm-api-checker
+
+Builds:
+  - versionName: 1.0.0
+    versionCode: 1
+    commit: v1.0.0
+
+AntiFeatures:
+  - NonFreeNet
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 1.0.0
+CurrentVersionCode: 1

@@ -57,3 +57,14 @@
 ## 免责声明
 
 个人工具，与 DeepSeek / OpenCode 无关联。Zen 账单解析依赖网页结构，OpenCode 改版可能失效。
+
+## F-Droid
+
+F-Droid 收录进行中（草稿见 `docs/fdroid/com.xieguiawu.apicheckers.yml`）。
+应用带有 `NonFreeNet` 反特性标记：它是 DeepSeek 与 opencode.ai 专有服务的
+客户端。无广告、无追踪、无遥测。
+
+商店元数据位于 `fastlane/metadata/android/`（en-US + zh-CN）。
+发版流程：在 `app/build.gradle.kts` 递增 `versionCode`/`versionName` →
+打 `v<versionName>` tag → 更新 `fastlane/metadata/android/*/changelogs/<versionCode>.txt`。
+可复现性用 `scripts/verify-reproducible.sh` 验证。

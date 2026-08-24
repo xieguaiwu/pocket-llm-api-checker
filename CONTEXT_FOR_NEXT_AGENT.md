@@ -1,5 +1,12 @@
 # CONTEXT_FOR_NEXT_AGENT.md
 
+## F-Droid 发布准备（2026-08-24）
+- **状态**：Phase 1 完成——fastlane 元数据（en-US + zh-CN：short/full description、icon.png 从矢量精确渲染、2 张占位截图[真机截图待替换]、changelogs/1.txt）+ `scripts/verify-reproducible.sh`（双构建哈希对比）+ fdroiddata 草稿 `docs/fdroid/com.xieguiawu.apicheckers.yml`（含 NonFreeNet 声明，提交位置 metadata/com.xieguiawu.apicheckers.yml）
+- **合规结论**：MIT / 纯 FOSS 依赖 / 单 INTERNET 权限 / 无广告统计 → 硬性要求全满足；缺 git tag 已补（v1.0.0）
+- **待办**：①真机侧载 `app-release-unsigned.apk` 后截图替换 phoneScreenshots 占位图 ②用户 GitLab fork fdroiddata 提 MR ③发版纪律：bump versionCode/versionName → tag vX.Y.Z → 更新 changelogs/<versionCode>.txt（Tags 模式自动发现）
+- **可复现性**：纯 Kotlin、isMinifyEnabled=false（无 R8）→ 预期可复现；`verify-reproducible.sh` 验证通过后可选走自有签名 + Binaries/AllowedAPKSigningKeys 拿 Verified 徽章（签名决策窗口在首次发布前，不可中途更换）
+- 完整调查：`~/Desktop/go-projects/LLM-api-check/docs/plans/2026-08-24-fdroid-publishing-plan.md`
+
 ## 项目当前状态
 API Checkers — 极简深色 Android app，查看 DeepSeek API 与 OpenCode（Zen + Go 两个 plan）用量，OpenCode 支持 3 账号区分。**开发完成，公开 repo：https://github.com/xieguaiwu/pocket-llm-api-checker，待真机冒烟测试。**
 

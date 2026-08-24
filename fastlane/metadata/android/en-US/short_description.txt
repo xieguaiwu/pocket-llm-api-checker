@@ -1,0 +1,1 @@
+Check DeepSeek & OpenCode API usage, balance and limits

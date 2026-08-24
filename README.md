@@ -57,3 +57,14 @@ Requires: JDK 17+, Android SDK (platform 35, build-tools 35.0.0), Android device
 ## Disclaimer
 
 Personal tool. Not affiliated with DeepSeek or OpenCode. Zen billing parsing may break if OpenCode changes their web page.
+
+## F-Droid
+
+F-Droid inclusion is in progress (see `docs/fdroid/com.xieguiawu.apicheckers.yml`).
+The app carries a `NonFreeNet` anti-feature: it is a client for the proprietary
+DeepSeek and opencode.ai services. No ads, no tracking, no telemetry.
+
+Store metadata lives under `fastlane/metadata/android/` (en-US + zh-CN).
+Release workflow: bump `versionCode`/`versionName` in `app/build.gradle.kts`,
+tag `v<versionName>`, update `fastlane/metadata/android/*/changelogs/<versionCode>.txt`.
+Verify reproducibility with `scripts/verify-reproducible.sh`.
