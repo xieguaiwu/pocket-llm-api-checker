@@ -183,6 +183,25 @@ object SecureSettings {
         prefs.edit().putString("accounts_json", enc(json.encodeToString(list))).apply()
     }
 
+    // Qwen Token Plan 账号（整体 JSON 加密存储，与 accounts 同写法）
+    fun getQwenAccounts(): List<QwenAccount> {
+        val raw = prefs.getString("qwen_accounts_json", "[]") ?: "[]"
+        return runCatching { json.decodeFromString<List<QwenAccount>>(dec(raw)) }.getOrDefault(emptyList())
+    }
+
+    fun saveQwenAccount(a: QwenAccount) {
+        val list = getQwenAccounts().toMutableList()
+        val idx = list.indexOfFirst { it.id == a.id }
+        if (idx >= 0) list[idx] = a else list.add(a)
+        prefs.edit().putString("qwen_accounts_json", enc(json.encodeToString(list))).apply()
+        if (runCatching { dec(enc(json.encodeToString(list))) }.isSuccess) securityWarning = null
+    }
+
+    fun deleteQwenAccount(id: String) {
+        val list = getQwenAccounts().filterNot { it.id == id }
+        prefs.edit().putString("qwen_accounts_json", enc(json.encodeToString(list))).apply()
+    }
+
     // 最近更新时间
     fun lastUpdate(key: String): Long = prefs.getLong("last_update_$key", 0L)
     fun setLastUpdate(key: String, t: Long) { prefs.edit().putLong("last_update_$key", t).apply() }

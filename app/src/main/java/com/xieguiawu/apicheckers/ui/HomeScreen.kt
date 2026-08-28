@@ -44,6 +44,8 @@ import androidx.compose.ui.unit.sp
 import com.xieguiawu.apicheckers.AccountUi
 import com.xieguiawu.apicheckers.AppViewModel
 import com.xieguiawu.apicheckers.DeepSeekUi
+import com.xieguiawu.apicheckers.QwenUi
+import com.xieguiawu.apicheckers.data.Parsers
 import com.xieguiawu.apicheckers.ui.theme.Accent
 import com.xieguiawu.apicheckers.ui.theme.Bg
 import com.xieguiawu.apicheckers.ui.theme.Card
@@ -102,7 +104,7 @@ fun formatTime(epochMillis: Long): String =
 // ── 总览页 ─────────────────────────────────────────────────────
 
 @Composable
-fun HomeScreen(vm: AppViewModel, onOpenAccount: (String) -> Unit, onOpenSettings: () -> Unit) {
+fun HomeScreen(vm: AppViewModel, onOpenAccount: (String) -> Unit, onOpenQwen: (String) -> Unit, onOpenSettings: () -> Unit) {
     val ui by vm.uiState.collectAsState()
 
     // 每 5 分钟自动刷新
@@ -177,6 +179,25 @@ fun HomeScreen(vm: AppViewModel, onOpenAccount: (String) -> Unit, onOpenSettings
             }
             items(ui.accounts, key = { it.account.id }) { acc ->
                 AccountCard(acc, onClick = { onOpenAccount(acc.account.id) })
+            }
+            if (ui.qwenList.isEmpty()) {
+                item(key = "qwen-empty") {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Card),
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Text(
+                            "暂无 Qwen Token Plan 账号，点击下方「添加账号」配置",
+                            color = TextSub,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
+                }
+            }
+            items(ui.qwenList, key = { it.account?.id ?: "qwen-none" }) { q ->
+                QwenCard(q, onClick = { q.account?.let { onOpenQwen(it.id) } })
             }
             item(key = "add") {
                 TextButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
@@ -318,5 +339,75 @@ private fun EmptyAccountsCard() {
             fontSize = 14.sp,
             modifier = Modifier.padding(16.dp),
         )
+    }
+}
+
+/** Qwen Token Plan 卡片：状态点 + 名称 + 配额窗口（5小时/7天）+ 套餐/模型摘要 */
+@Composable
+private fun QwenCard(q: QwenUi, onClick: () -> Unit) {
+    val acc = q.account ?: return
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val dot = when {
+                    q.plan != null || q.usage != null -> Accent
+                    q.error != null -> Danger
+                    else -> TextSub
+                }
+                Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    acc.name,
+                    color = TextMain,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            when {
+                !q.keyConfigured -> Text("未配置 API Key，点击右上角设置添加", color = TextSub, fontSize = 14.sp)
+                else -> {
+                    q.usage?.let { u ->
+                        listOfNotNull(u.fiveHour?.let { "5小时" to it }, u.weekly?.let { "7天" to it }).forEach { (label, w) ->
+                            val color = usageColor(w.percent, w.exhausted)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(label, color = TextSub, fontSize = 13.sp, modifier = Modifier.width(48.dp))
+                                UsageBar(w.percent, color, Modifier.weight(1f))
+                                Spacer(Modifier.width(8.dp))
+                                Text("${w.percent}%", color = color, fontSize = 13.sp)
+                                if (w.exhausted) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("已限流", color = Danger, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                    qwenPlanSummary(q)?.let { Text(it, color = TextSub, fontSize = 13.sp) }
+                    if (!acc.hasCookie) {
+                        Text("未配置控制台 Cookie，仅显示模型清单", color = TextSub, fontSize = 12.sp)
+                    }
+                    q.error?.let { Text(it, color = Danger, fontSize = 13.sp) }
+                }
+            }
+        }
+    }
+}
+
+/** 套餐/模型摘要：套餐 Lite · 模型 4 个 / 模型 4 个 / 套餐 Lite（与 Go 侧 planSummary 同语义） */
+private fun qwenPlanSummary(q: QwenUi): String? {
+    val plan = Parsers.planDisplayName(q.usage?.planCode.orEmpty())
+    val count = q.plan?.models?.size ?: 0
+    return when {
+        plan.isNotEmpty() && count > 0 -> "套餐 $plan · 模型 $count 个"
+        count > 0 -> "模型 $count 个"
+        plan.isNotEmpty() -> "套餐 $plan"
+        else -> null
     }
 }

@@ -1,0 +1,5 @@
+Add Qwen Token Plan (Alibaba Cloud Bailian) provider:
+model list, 5-hour / 7-day quota windows with reset
+countdowns, plan tier, region support (CN / intl),
+and encrypted per-account settings. Quota windows
+need an optional console cookie.

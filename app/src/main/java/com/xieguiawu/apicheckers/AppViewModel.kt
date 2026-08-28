@@ -9,6 +9,10 @@ import com.xieguiawu.apicheckers.data.DeepSeekCost
 import com.xieguiawu.apicheckers.data.DeepSeekRepo
 import com.xieguiawu.apicheckers.data.GoUsage
 import com.xieguiawu.apicheckers.data.OpenCodeRepo
+import com.xieguiawu.apicheckers.data.QwenAccount
+import com.xieguiawu.apicheckers.data.QwenPlan
+import com.xieguiawu.apicheckers.data.QwenRepo
+import com.xieguiawu.apicheckers.data.QwenUsage
 import com.xieguiawu.apicheckers.data.SecureSettings
 import com.xieguiawu.apicheckers.data.ZenBilling
 import com.xieguiawu.apicheckers.data.Account
@@ -40,10 +44,22 @@ data class AccountUi(
     val loading: Boolean = false,
 )
 
+/** 单个 Qwen Token Plan 账号的 UI 状态 */
+data class QwenUi(
+    val account: QwenAccount? = null,
+    val plan: QwenPlan? = null,
+    val usage: QwenUsage? = null,
+    val error: String? = null,
+    val loading: Boolean = false,
+) {
+    val keyConfigured: Boolean get() = account?.apiKey?.isNotBlank() == true
+}
+
 /** 全局 UI 状态 */
 data class UiState(
     val deepSeekList: List<DeepSeekUi> = emptyList(),
     val accounts: List<AccountUi> = emptyList(),
+    val qwenList: List<QwenUi> = emptyList(),
     val refreshing: Boolean = false,
     val lastUpdated: Long = 0L,
 )
@@ -53,6 +69,7 @@ data class UiState(
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val deepSeekRepo = DeepSeekRepo()
     private val openCodeRepo = OpenCodeRepo()
+    private val qwenRepo = QwenRepo()
     private val _ui = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _ui.asStateFlow()
 
@@ -67,10 +84,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun loadFromCache() {
         val dsAccounts = SecureSettings.getDeepSeekAccounts().map { DeepSeekUi(account = it) }
         val accounts = SecureSettings.getAccounts().map { AccountUi(it) }
-        _ui.update { it.copy(deepSeekList = dsAccounts, accounts = accounts) }
+        val qwenAccounts = SecureSettings.getQwenAccounts().map { QwenUi(account = it) }
+        _ui.update { it.copy(deepSeekList = dsAccounts, accounts = accounts, qwenList = qwenAccounts) }
     }
 
-    /** 刷新全部数据（DeepSeek + 所有账号，并行）。重入保护：刷新中忽略再次触发 */
+    /** 刷新全部数据（DeepSeek + OpenCode + Qwen，并行）。重入保护：刷新中忽略再次触发 */
     fun refreshAll() {
         if (_ui.value.refreshing) return
         viewModelScope.launch {
@@ -79,6 +97,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // 保留旧数据避免刷新期间界面闪断（P2-15）
             val freshDs = SecureSettings.getDeepSeekAccounts()
             val fresh = SecureSettings.getAccounts()
+            val freshQwen = SecureSettings.getQwenAccounts()
             _ui.update { st ->
                 val dsMerged = freshDs.map { acc ->
                     st.deepSeekList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: DeepSeekUi(account = acc)
@@ -86,12 +105,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val merged = fresh.map { acc ->
                     st.accounts.firstOrNull { it.account.id == acc.id }?.copy(account = acc) ?: AccountUi(acc)
                 }
-                st.copy(deepSeekList = dsMerged, accounts = merged)
+                val qwenMerged = freshQwen.map { acc ->
+                    st.qwenList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: QwenUi(account = acc)
+                }
+                st.copy(deepSeekList = dsMerged, accounts = merged, qwenList = qwenMerged)
             }
-            // 并行刷新所有 DeepSeek 账号与 OpenCode 账号
+            // 并行刷新所有 DeepSeek / OpenCode / Qwen 账号
             kotlinx.coroutines.coroutineScope {
                 freshDs.forEach { launch { refreshDeepSeekNow(it.id) } }
                 fresh.forEach { launch { refreshAccountNow(it.id) } }
+                freshQwen.forEach { launch { refreshQwenNow(it.id) } }
             }
             val now = System.currentTimeMillis()
             _ui.update { it.copy(refreshing = false, lastUpdated = now) }
@@ -158,6 +181,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             st.copy(accounts = st.accounts.map {
                 if (it.account.id == id) AccountUi(acc, go.getOrNull(), zen?.getOrNull(), error, loading = false)
                 else it
+            })
+        }
+    }
+
+    /** 刷新单个 Qwen 账号：模型清单（API Key）+ 配额窗口（配了 Cookie 才拉）。 */
+    fun refreshQwen(id: String) {
+        viewModelScope.launch { refreshQwenNow(id) }
+    }
+
+    /**
+     * 与 Go 侧 refreshQwen 同语义：plan 失败与 usage 失败合并透出；
+     * 无 Cookie 不算 error（UI 灰字提示）。部分失败时既保留已成功数据又透出 error。
+     */
+    private suspend fun refreshQwenNow(id: String) {
+        val acc = SecureSettings.getQwenAccounts().firstOrNull { it.id == id } ?: return
+        _ui.update { st ->
+            st.copy(qwenList = st.qwenList.map {
+                if (it.account?.id == id) it.copy(loading = true, error = null) else it
+            })
+        }
+        val plan = qwenRepo.plan(acc)
+        val usage = if (acc.hasCookie) qwenRepo.usage(acc) else null
+        val error = listOfNotNull(plan.exceptionOrNull()?.message, usage?.exceptionOrNull()?.message)
+            .joinToString("\n").ifEmpty { null }
+        _ui.update { st ->
+            st.copy(qwenList = st.qwenList.map {
+                if (it.account?.id == id) QwenUi(
+                    account = acc,
+                    plan = plan.getOrNull(),
+                    usage = usage?.getOrNull(),
+                    error = error,
+                    loading = false,
+                ) else it
             })
         }
     }

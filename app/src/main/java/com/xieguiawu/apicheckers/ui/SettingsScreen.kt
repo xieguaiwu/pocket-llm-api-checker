@@ -1,7 +1,9 @@
 package com.xieguiawu.apicheckers.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -86,6 +88,18 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
     var showAccKey by remember { mutableStateOf(false) }
     var showAccCookie by remember { mutableStateOf(false) }
     var formError by remember { mutableStateOf<String?>(null) }
+    // Qwen Token Plan 账号
+    var qwenAccounts by remember { mutableStateOf(SecureSettings.getQwenAccounts()) }
+    var qwenRenaming by remember { mutableStateOf<com.xieguiawu.apicheckers.data.QwenAccount?>(null) }
+    var qwenRenameText by remember { mutableStateOf("") }
+    var qwenEditing by remember { mutableStateOf(false) }
+    var qwenName by remember { mutableStateOf("") }
+    var qwenKey by remember { mutableStateOf("") }
+    var qwenCookie by remember { mutableStateOf("") }
+    var qwenRegion by remember { mutableStateOf(com.xieguiawu.apicheckers.data.RegionQwenCN) }
+    var showQwenKey by remember { mutableStateOf(false) }
+    var showQwenCookie by remember { mutableStateOf(false) }
+    var qwenRegionDialog by remember { mutableStateOf(false) }
     // 操作反馈
     var hint by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -427,6 +441,161 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                     }
                 }
             }
+
+            // ── Qwen Token Plan 账号分区 ──
+            item(key = "qwen") {
+                SectionCard("Qwen Token Plan 账号") {
+                    if (qwenAccounts.isEmpty()) {
+                        Text("暂无 Qwen 账号", color = TextSub, fontSize = 13.sp)
+                    }
+                    qwenAccounts.forEach { acc ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(acc.name, color = TextMain, fontSize = 14.sp)
+                                Text(
+                                    keyTail(acc.apiKey) + " · " + com.xieguiawu.apicheckers.data.qwenRegionDisplayName(acc.region) +
+                                        if (acc.hasCookie) " · Cookie" else "",
+                                    color = TextSub,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                            IconButton(onClick = {
+                                qwenRenaming = acc
+                                qwenRenameText = acc.name
+                            }) {
+                                Icon(Icons.Filled.Edit, contentDescription = "重命名 Qwen 账号", tint = TextSub)
+                            }
+                            IconButton(onClick = {
+                                SecureSettings.deleteQwenAccount(acc.id)
+                                qwenAccounts = SecureSettings.getQwenAccounts()
+                                vm.refreshAll()
+                                flashHint("已删除 Qwen 账号「${acc.name}」")
+                            }) {
+                                Icon(Icons.Filled.Delete, contentDescription = "删除 Qwen 账号", tint = Danger)
+                            }
+                        }
+                    }
+
+                    if (qwenEditing) {
+                        HorizontalDivider(color = Divider, modifier = Modifier.padding(vertical = 4.dp))
+                        OutlinedTextField(
+                            value = qwenName,
+                            onValueChange = { qwenName = it },
+                            label = { Text("名称") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = qwenKey,
+                            onValueChange = { qwenKey = it },
+                            label = { Text("API Key（可选，sk-sp- 开头）") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            visualTransformation = if (showQwenKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showQwenKey = !showQwenKey }) {
+                                    Icon(
+                                        if (showQwenKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                        contentDescription = if (showQwenKey) "隐藏" else "显示",
+                                        tint = TextSub,
+                                    )
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = qwenCookie,
+                            onValueChange = { qwenCookie = it },
+                            label = { Text("控制台 Cookie（可选，可粘贴整段 Cookie: 请求头）") },
+                            minLines = 2,
+                            maxLines = 4,
+                            colors = fieldColors,
+                            visualTransformation = if (showQwenCookie) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showQwenCookie = !showQwenCookie }) {
+                                    Icon(
+                                        if (showQwenCookie) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                        contentDescription = if (showQwenCookie) "隐藏" else "显示",
+                                        tint = TextSub,
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        // 区域下拉：readOnly TextField 会消费点击，外层 overlay 重新捕获（§3 教训）
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = com.xieguiawu.apicheckers.data.qwenRegionDisplayName(qwenRegion),
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("区域") },
+                                singleLine = true,
+                                colors = fieldColors,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Box(
+                                Modifier
+                                    .matchParentSize()
+                                    .clickable { qwenRegionDialog = true },
+                            )
+                        }
+                        Text(
+                            "API Key：百炼控制台 Token Plan 订阅密钥（sk-sp- 开头），与区域绑定。\n" +
+                                "Cookie：浏览器 DevTools → Application → Cookies → bailian.console.aliyun.com，" +
+                                "复制整段请求头（用于配额窗口，可选）。",
+                            color = TextSub,
+                            fontSize = 12.sp,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Button(onClick = {
+                                val name = qwenName.trim().ifEmpty { "Qwen ${qwenAccounts.size + 1}" }
+                                SecureSettings.saveQwenAccount(
+                                    com.xieguiawu.apicheckers.data.QwenAccount(
+                                        id = java.util.UUID.randomUUID().toString(),
+                                        name = name,
+                                        apiKey = qwenKey.trim(),
+                                        consoleCookie = qwenCookie.trim(),
+                                        region = qwenRegion,
+                                    ),
+                                )
+                                qwenAccounts = SecureSettings.getQwenAccounts()
+                                qwenEditing = false
+                                qwenName = ""
+                                qwenKey = ""
+                                qwenCookie = ""
+                                qwenRegion = com.xieguiawu.apicheckers.data.RegionQwenCN
+                                vm.refreshAll()
+                                flashHint("Qwen 账号「$name」已保存，正在刷新数据")
+                            }) {
+                                Text("保存 Qwen 账号")
+                            }
+                            TextButton(onClick = {
+                                qwenEditing = false
+                                qwenName = ""
+                                qwenKey = ""
+                                qwenCookie = ""
+                                qwenRegion = com.xieguiawu.apicheckers.data.RegionQwenCN
+                            }) {
+                                Text("取消", color = TextSub)
+                            }
+                        }
+                    } else {
+                        TextButton(onClick = {
+                            qwenEditing = true
+                            qwenName = "Qwen ${qwenAccounts.size + 1}"
+                        }) {
+                            Icon(Icons.Filled.Add, contentDescription = null, tint = Accent)
+                            Spacer(Modifier.width(4.dp))
+                            Text("添加 Qwen 账号", color = Accent, fontSize = 14.sp)
+                        }
+                    }
+                }
+            }
         }
 
         // 账号重命名对话框
@@ -501,6 +670,74 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                 },
                 dismissButton = {
                     TextButton(onClick = { renamingDs = null }) { Text("取消", color = TextSub) }
+                },
+            )
+        }
+
+        // Qwen 账号重命名对话框
+        qwenRenaming?.let { acc ->
+            AlertDialog(
+                onDismissRequest = { qwenRenaming = null },
+                containerColor = Card,
+                titleContentColor = TextMain,
+                textContentColor = TextMain,
+                title = { Text("重命名 Qwen 账号") },
+                text = {
+                    OutlinedTextField(
+                        value = qwenRenameText,
+                        onValueChange = { qwenRenameText = it },
+                        singleLine = true,
+                        colors = fieldColors,
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val newName = qwenRenameText.trim()
+                        if (newName.isNotBlank()) {
+                            SecureSettings.saveQwenAccount(acc.copy(name = newName))
+                            qwenAccounts = SecureSettings.getQwenAccounts()
+                            vm.refreshAll()
+                            flashHint("已重命名为「${newName}」")
+                        }
+                        qwenRenaming = null
+                    }) { Text("保存") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { qwenRenaming = null }) { Text("取消", color = TextSub) }
+                },
+            )
+        }
+
+        // Qwen 区域选择对话框
+        if (qwenRegionDialog) {
+            AlertDialog(
+                onDismissRequest = { qwenRegionDialog = false },
+                containerColor = Card,
+                titleContentColor = TextMain,
+                textContentColor = TextMain,
+                title = { Text("选择区域") },
+                text = {
+                    Column {
+                        listOf(
+                            com.xieguiawu.apicheckers.data.RegionQwenCN to "中国大陆（北京）",
+                            com.xieguiawu.apicheckers.data.RegionQwenIntl to "国际（新加坡）",
+                        ).forEach { (region, label) ->
+                            TextButton(onClick = {
+                                qwenRegion = region
+                                qwenRegionDialog = false
+                            }) {
+                                Text(
+                                    label,
+                                    color = if (region == qwenRegion) Accent else TextMain,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { qwenRegionDialog = false }) { Text("取消", color = TextSub) }
                 },
             )
         }

@@ -1,5 +1,5 @@
-Check your DeepSeek and OpenCode (Zen + Go) usage right
-from your phone.
+Check your DeepSeek, OpenCode (Zen + Go) and Qwen
+Token Plan usage right from your phone.
 
 Features:
 - DeepSeek: account balance (total / topped-up / granted)
@@ -10,8 +10,12 @@ Features:
   windows with reset countdowns and rate-limit status
 - OpenCode Zen plan: balance, monthly spend and limit,
   auto-reload settings
-- Multiple accounts: add, rename and delete DeepSeek and
-  OpenCode accounts freely
+- Qwen Token Plan (Alibaba Cloud Bailian): model list,
+  5-hour / 7-day quota windows with reset countdowns,
+  plan tier, CN / intl region support; quota windows need
+  an optional console cookie
+- Multiple accounts: add, rename and delete DeepSeek,
+  OpenCode and Qwen accounts freely
 - Pull-to-refresh and auto-refresh every 5 minutes
 - Minimal dark UI with a single accent color, no clutter
 - Secure by default: every API key, cookie and token is
@@ -19,11 +23,12 @@ Features:
   is stored; nothing is hardcoded or logged
 
 Privacy: no ads, no trackers, no telemetry. The only
-network traffic is direct requests to the DeepSeek and
-opencode.ai services that you configure.
+network traffic is direct requests to the DeepSeek,
+opencode.ai and Alibaba Cloud services that you configure.
 
-Note: this app is a client for the proprietary DeepSeek
-and OpenCode network services. It reads usage data from
-their official APIs and pages, which may change over time.
+Note: this app is a client for the proprietary DeepSeek,
+OpenCode and Alibaba Cloud Bailian network services. It
+reads usage data from their official APIs and pages,
+which may change over time.
 
 License: MIT. Source code on GitHub.

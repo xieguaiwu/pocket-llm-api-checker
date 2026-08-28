@@ -1,4 +1,5 @@
-在手机上随时查看 DeepSeek 与 OpenCode（Zen + Go）的使用情况。
+在手机上随时查看 DeepSeek、OpenCode（Zen + Go）与
+Qwen Token Plan 的使用情况。
 
 功能：
 - DeepSeek：账户余额（总额 / 充值 / 赠送，多币种）与
@@ -8,8 +9,12 @@
   窗口，带重置倒计时与限流状态
 - OpenCode Zen 套餐：余额、月度消费与上限、自动充值
   设置
-- 多账号：自由添加、重命名、删除 DeepSeek 与 OpenCode
-  账号，首页独立卡片展示
+- Qwen Token Plan（阿里云百炼）：模型清单、5小时/7天
+  配额窗口（带重置倒计时与限流状态）、套餐档位、
+  中国大陆/国际区域支持；配额窗口需可选配置控制台
+  Cookie
+- 多账号：自由添加、重命名、删除 DeepSeek、OpenCode
+  与 Qwen 账号，首页独立卡片展示
 - 下拉刷新与每 5 分钟自动刷新
 - 极简深色界面，单一强调色，无杂乱
 - 默认安全：所有 API key、cookie 与 token 在存储前均
@@ -17,10 +22,10 @@
   写入日志
 
 隐私：无广告、无追踪、无遥测。唯一的网络流量是直连
-你配置的 DeepSeek 与 opencode.ai 服务。
+你配置的 DeepSeek、opencode.ai 与阿里云百炼服务。
 
-说明：本应用是 DeepSeek 与 OpenCode 专有网络服务的
-客户端，从它们的官方 API 与页面读取用量数据，页面
-结构变化可能导致功能失效。
+说明：本应用是 DeepSeek、OpenCode 与阿里云百炼专有
+网络服务的客户端，从它们的官方 API 与页面读取用量
+数据，页面结构变化可能导致功能失效。
 
 许可证：MIT。源码在 GitHub。

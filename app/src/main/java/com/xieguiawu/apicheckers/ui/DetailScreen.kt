@@ -3,6 +3,8 @@ package com.xieguiawu.apicheckers.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -35,10 +37,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xieguiawu.apicheckers.AccountUi
 import com.xieguiawu.apicheckers.AppViewModel
+import com.xieguiawu.apicheckers.QwenUi
 import com.xieguiawu.apicheckers.data.GoWindow
+import com.xieguiawu.apicheckers.data.Parsers
+import com.xieguiawu.apicheckers.data.QwenWindow
+import com.xieguiawu.apicheckers.data.qwenRegionDisplayName
 import com.xieguiawu.apicheckers.ui.theme.Bg
 import com.xieguiawu.apicheckers.ui.theme.Card
 import com.xieguiawu.apicheckers.ui.theme.Danger
+import com.xieguiawu.apicheckers.ui.theme.Divider
 import com.xieguiawu.apicheckers.ui.theme.TextMain
 import com.xieguiawu.apicheckers.ui.theme.TextSub
 import java.time.Duration
@@ -232,5 +239,172 @@ private fun ErrorCard(msg: String) {
         shape = RoundedCornerShape(10.dp),
     ) {
         Text(msg, color = Danger, fontSize = 13.sp, modifier = Modifier.padding(16.dp))
+    }
+}
+
+// ── Qwen Token Plan 详情页 ─────────────────────────────────────
+
+@Composable
+fun QwenDetailScreen(vm: AppViewModel, id: String, onBack: () -> Unit) {
+    val ui by vm.uiState.collectAsState()
+    val q = ui.qwenList.firstOrNull { it.account?.id == id }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Bg)
+            .safeDrawingPadding()
+            .padding(horizontal = 20.dp),
+    ) {
+        // 顶栏：返回 + 账号名 + 手动刷新
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = TextMain)
+            }
+            Text(
+                q?.account?.name ?: "Qwen 详情",
+                color = TextMain,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = { vm.refreshQwen(id) }) {
+                Icon(Icons.Filled.Refresh, contentDescription = "刷新", tint = TextSub)
+            }
+        }
+        if (q == null) {
+            Text(
+                "账号不存在或已被删除",
+                color = TextSub,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+            ) {
+                item(key = "qwen-plan") { QwenTokenPlanCard(q) }
+                item(key = "qwen-models") { QwenModelsCard(q) }
+                q.error?.let { err -> item(key = "error") { ErrorCard(err) } }
+            }
+        }
+    }
+}
+
+/** Token Plan 卡片：档位 + 5小时/7天 配额窗口（窗口行尾倒计时恒显，已限流徽章与倒计时并存） */
+@Composable
+private fun QwenTokenPlanCard(q: QwenUi) {
+    val acc = q.account ?: return
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                "Token Plan · 订阅（${qwenRegionDisplayName(acc.region)}）",
+                color = TextMain,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (acc.apiKey.isBlank()) {
+                Text("未配置 API Key，去设置添加", color = TextSub, fontSize = 14.sp)
+                return@Column
+            }
+            val tier = Parsers.planDisplayName(q.usage?.planCode.orEmpty())
+            if (tier.isNotEmpty()) {
+                Text("套餐 $tier", color = TextMain, fontSize = 14.sp)
+            }
+            val u = q.usage
+            when {
+                q.loading && u == null -> Text("加载中…", color = TextSub, fontSize = 14.sp)
+                u == null -> {
+                    if (acc.hasCookie) {
+                        Text("配额窗口 暂无数据", color = TextSub, fontSize = 14.sp)
+                    } else {
+                        Text("配额窗口 需控制台 Cookie", color = TextSub, fontSize = 14.sp)
+                    }
+                }
+                else -> {
+                    QwenWindowRow("5小时", u.fiveHour)
+                    QwenWindowRow("7天", u.weekly)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Qwen 配额窗口行：与 Go 三窗口 WindowRow 同布局——
+ * 行尾重置倒计时恒显；配额用尽时「已限流」徽章与倒计时并存
+ * （限流时限直接可见，见 ~/prompt_boilerplates/Coding/index.md §六）。
+ */
+@Composable
+private fun QwenWindowRow(label: String, w: QwenWindow?) {
+    if (w == null) return
+    val color = usageColor(w.percent, w.exhausted)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, color = TextSub, fontSize = 13.sp, modifier = Modifier.width(100.dp))
+            CountdownText(w.resetsAt, modifier = Modifier.weight(1f))
+            Text("${w.percent}%", color = color, fontSize = 13.sp)
+            if (w.exhausted) {
+                Spacer(Modifier.width(6.dp))
+                Text("已限流", color = Danger, fontSize = 12.sp)
+            }
+        }
+        UsageBar(w.percent, color)
+    }
+}
+
+/** 模型清单卡片：数量 + 可换行模型列表 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun QwenModelsCard(q: QwenUi) {
+    val models = q.plan?.models.orEmpty()
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                if (models.isEmpty()) "模型清单" else "模型清单（${models.size} 个）",
+                color = TextMain,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (models.isEmpty()) {
+                if (q.account?.apiKey?.isNotBlank() == true) {
+                    Text("加载中…", color = TextSub, fontSize = 14.sp)
+                } else {
+                    Text("未配置 API Key", color = TextSub, fontSize = 14.sp)
+                }
+            } else {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    models.forEach { id ->
+                        Text(
+                            id,
+                            color = TextMain,
+                            fontSize = 13.sp,
+                            modifier = Modifier
+                                .background(Divider, RoundedCornerShape(4.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
+        }
     }
 }

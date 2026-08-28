@@ -14,6 +14,7 @@ import androidx.navigation.compose.rememberNavController
 import com.xieguiawu.apicheckers.data.SecureSettings
 import com.xieguiawu.apicheckers.ui.DetailScreen
 import com.xieguiawu.apicheckers.ui.HomeScreen
+import com.xieguiawu.apicheckers.ui.QwenDetailScreen
 import com.xieguiawu.apicheckers.ui.SettingsScreen
 import com.xieguiawu.apicheckers.ui.theme.ApiCheckersTheme
 import com.xieguiawu.apicheckers.ui.theme.Bg
@@ -46,11 +47,19 @@ private fun AppNav(vm: AppViewModel) {
             HomeScreen(
                 vm = vm,
                 onOpenAccount = { nav.navigate("account/$it") },
+                onOpenQwen = { nav.navigate("qwen/$it") },
                 onOpenSettings = { nav.navigate("settings") },
             )
         }
         composable("account/{id}") { backStackEntry ->
             DetailScreen(
+                vm = vm,
+                id = backStackEntry.arguments?.getString("id") ?: "",
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable("qwen/{id}") { backStackEntry ->
+            QwenDetailScreen(
                 vm = vm,
                 id = backStackEntry.arguments?.getString("id") ?: "",
                 onBack = { nav.popBackStack() },
