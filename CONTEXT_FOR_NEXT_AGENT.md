@@ -40,8 +40,7 @@ API Checkers — 极简深色 Android app，查看 DeepSeek API、OpenCode（Zen
 - **UI**：9 色纯色板（见 Theme.kt），无 Material 默认色泄漏；单 ViewModel（Activity 级共享）；Qwen 详情窗口行 = CountdownText 恒显 + 已限流徽章并存（§六）
 
 ## 知识图谱
-- graphify-out/: 存在（2026-08-15 构建：199 nodes / 305 edges / 18 communities；God Nodes: AppViewModel 15、SecureSettings 15、HomeScreen 8、shouldAutoRefreshWhileHeld 8；无 import cycle）
-- 图谱不入库（.gitignore）；**v1.1.0 代码变更后已重建**（见上）
+- graphify-out/: 存在（**2026-08-29 v1.1.0 重建：316 nodes / 603 edges / 22 communities**；图谱不入库（.gitignore））
 
 ## 最后更新时间
 2026-08-29 03:10
