@@ -2,11 +2,14 @@ package com.xieguiawu.apicheckers.data
 
 import java.time.LocalDate
 import java.time.ZonedDateTime
+import java.security.SecureRandom
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -485,3 +488,206 @@ private fun enc(v: String): String = java.net.URLEncoder.encode(v, "UTF-8").repl
 
 /** String 扩展：非空时执行 [block] 并返回其值 */
 private inline fun <T> String.ifNotEmpty(block: (String) -> T): T? = if (isNotEmpty()) block(this) else null
+
+// ── 智星云 AI Galaxy OpenAPI v2 仓库（AccessKey + SecretKey + MD5 签名） ──
+//
+// 平台特点（实测，见 Go 仓库 docs/plans/2026-08-29-ai-galaxy-provider.md）：
+//   - 统一 POST + application/x-www-form-urlencoded，所有参数（含 sign）走 body
+//   - HTTP 状态码恒为 200，错误在信封里（{success, code:"4000", message}）
+//     ——与 Qwen 控制台网关同坑，只看状态码会把失败读成成功
+//   - page_size 硬上限 100（超限回 code=4000 "page_size参数超限!"）
+//   - 实例列表响应内含实例 root/桌面明文口令，本仓库只把解析后的白名单结构
+//     交给上层，原始响应体绝不外传（错误消息同样只带 message，不带 data）
+
+/** 官方 OpenAPI v2 前缀（文档「开始使用」） */
+const val GalaxyBaseURL = "https://app.ai-galaxy.cn/openapi/v2"
+
+/** 平台 page_size 上限（实测 >100 报「page_size参数超限!」） */
+const val GalaxyMaxPageSize = 100
+
+/** 实例分组过滤值（平台语义） */
+const val GalaxyStatusDefault = "statusDefault" // 1,4,5,-1,7,8
+const val GalaxyStatusRunning = "statusRunning" // 1,4,5
+const val GalaxyStatusAll = "statusAll"         // 不过滤
+
+/** 成功状态码（字符串，不是整型——契约明确） */
+private const val GalaxyCodeOK = "2000"
+
+private const val GalaxyNonceAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+/** 生成 n 位字母数字随机串（平台要求 ≥8 位且一段时间内不可重复）。 */
+internal fun galaxyRandomNonce(n: Int): String {
+    val random = SecureRandom()
+    val sb = StringBuilder(n)
+    repeat(n) { sb.append(GalaxyNonceAlphabet[random.nextInt(GalaxyNonceAlphabet.length)]) }
+    return sb.toString()
+}
+
+/**
+ * 智星云数据仓库。BaseURL/Client/Now/Nonce/翻页上限测试可注入。
+ */
+class GalaxyRepo(
+    private val client: OkHttpClient = ApiClient.client,
+    private val baseURL: String = GalaxyBaseURL,
+    private val now: () -> ZonedDateTime = { ZonedDateTime.now() },
+    private val nonce: () -> String = { galaxyRandomNonce(12) },
+    /** 余额变更明细最大翻页数（≤0 → 默认 8 页 = 800 条） */
+    private val costPages: Int = 0,
+    /** 实例列表最大翻页数（≤0 → 默认 3 页） */
+    private val instancePages: Int = 0,
+) {
+    private val envJson = Json { ignoreUnknownKeys = true }
+
+    private fun base(): String = if (baseURL.isNotBlank()) baseURL.trimEnd('/') else GalaxyBaseURL
+
+    /**
+     * 发一次签名请求，返回 data 节点的原始 JSON 字符串。
+     * 认证类错误（AccessKey/SecretKey/实名）映射成可操作中文提示，供上层直接展示。
+     */
+    private suspend fun call(acc: GalaxyAccount, path: String, params: Map<String, String>): Result<String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (acc.accessKey.isBlank() || acc.secretKey.isBlank()) {
+                    error("未配置 AccessKey / SecretKey，请在设置中添加智星云账号")
+                }
+                val all = LinkedHashMap<String, String>()
+                for ((k, v) in params) if (v.isNotEmpty()) all[k] = v
+                all["apikey"] = acc.accessKey
+                all["timestamp"] = now().toEpochSecond().toString()
+                all["nonce"] = nonce()
+                all["sign"] = galaxySign(all, acc.secretKey)
+
+                val fb = FormBody.Builder()
+                all.forEach { (k, v) -> fb.add(k, v) }
+                val req = Request.Builder().url(base() + path)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Accept", "application/json")
+                    .header("User-Agent", ApiClient.BROWSER_UA)
+                    .post(fb.build())
+                    .build()
+                val resp = client.newCall(req).execute()
+                val body = resp.body?.string().orEmpty()
+                // 错误消息不得携带响应体：接口响应可能含实例口令等敏感数据（自我约定：只带 message）
+                if (resp.code !in 200..299) error("HTTP ${resp.code}")
+
+                // HTTP 恒 200：错误在信封里（success=false 或 code!="2000"）
+                val env = try {
+                    envJson.parseToJsonElement(body).jsonObject
+                } catch (e: Exception) {
+                    error("智星云响应格式错误")
+                }
+                // success 只认 JSON 布尔：字符串 "true"/"false" 不算数（对齐 Go rawBool 口径）
+                val successEl = env["success"] as? JsonPrimitive
+                val success = successEl != null && !successEl.isString && (successEl.booleanOrNull ?: false)
+                val code = galaxyCodeString(env["code"])
+                val message = env["message"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                if (!success || code != GalaxyCodeOK) error(galaxyError(code, message))
+                val data = env["data"] ?: error("智星云响应缺少 data 字段")
+                if (data.toString() == "null") error("智星云响应缺少 data 字段")
+                data.toString()
+            }
+        }
+
+    /** 主账户余额（现金 / 算力券 / 信用额度 / VIP）。 */
+    suspend fun balance(acc: GalaxyAccount): Result<GalaxyBalance> =
+        call(acc, "/account/get_main_account_info", emptyMap())
+            .mapCatching { parseGalaxyBalance(it).getOrThrow() }
+
+    /** 实例状态统计。 */
+    suspend fun statusCount(acc: GalaxyAccount): Result<GalaxyStatusCount> =
+        call(acc, "/instance/get_instance_status_count", emptyMap())
+            .mapCatching { parseGalaxyStatusCount(it).getOrThrow() }
+
+    /**
+     * 实例列表（statusType 传 GalaxyStatusDefault 等）。
+     * limit ≤0 表示不限量（仍受翻页上限约束）；pageSize 自动夹到 [1,100]。
+     */
+    suspend fun instances(acc: GalaxyAccount, statusType: String, limit: Int): Result<List<GalaxyInstance>> {
+        var pageSize = limit
+        if (pageSize <= 0 || pageSize > GalaxyMaxPageSize) pageSize = GalaxyMaxPageSize
+        val maxPages = if (instancePages > 0) instancePages else 3
+        val nowDt = now()
+        val out = mutableListOf<GalaxyInstance>()
+        for (page in 1..maxPages) {
+            val data = call(
+                acc, "/instance/get_instance_list",
+                mapOf(
+                    "page" to page.toString(),
+                    "page_size" to pageSize.toString(),
+                    "status_type" to statusType,
+                ),
+            ).getOrElse { return Result.failure(it) }
+            val parsed = parseGalaxyInstances(data, nowDt).getOrElse { return Result.failure(it) }
+            out.addAll(parsed.instances)
+            if (limit > 0 && out.size >= limit) return Result.success(out.take(limit))
+            if (!parsed.hasMore || parsed.instances.isEmpty()) return Result.success(out)
+        }
+        return Result.success(out)
+    }
+
+    /**
+     * 今日 / 近 7 天净消耗（余额变更明细聚合）。明细按时间倒序，翻到出现
+     * 早于「近 7 天」下界的记录即停（两个窗口都取完），上限 [costPages] 页。
+     */
+    suspend fun cost(acc: GalaxyAccount): Result<GalaxyCost> {
+        val maxPages = if (costPages > 0) costPages else 8
+        val nowDt = now()
+        val zone = nowDt.zone
+        val all = mutableListOf<GalaxyChange>()
+        var hasMore = false
+        for (page in 1..maxPages) {
+            val data = call(
+                acc, "/billing/get_balance_change_list",
+                mapOf(
+                    "page" to page.toString(),
+                    "page_size" to GalaxyMaxPageSize.toString(),
+                ),
+            ).getOrElse { return Result.failure(it) }
+            val parsed = parseGalaxyChanges(data, zone).getOrElse { return Result.failure(it) }
+            all.addAll(parsed.changes)
+            hasMore = parsed.hasMore
+            if (!hasMore) break
+            if (galaxyCostWindowCovered(all, nowDt.toLocalDate())) break
+        }
+        return Result.success(aggregateGalaxyCost(all, hasMore, nowDt))
+    }
+}
+
+/** code 字段宽容取字符串形式（"2000" / 2000 都接受）。 */
+private fun galaxyCodeString(v: kotlinx.serialization.json.JsonElement?): String {
+    val p = v?.jsonPrimitive ?: return ""
+    p.contentOrNull?.let { s ->
+        // 数字形式：剥掉小数尾巴（对齐 Go fmt.Sprintf("%d", int64(f))）
+        return s.toDoubleOrNull()?.let { d ->
+            if (d % 1.0 == 0.0) d.toLong().toString() else s
+        } ?: s
+    }
+    return ""
+}
+
+/**
+ * 把平台 message 映射成中文可操作提示（与 Go galaxyError 逐字一致）。
+ * 实测文案：accesskey不存在! / sign验证失败! / nonce参数缺失! / page_size参数超限!
+ */
+private fun galaxyError(code: String, message: String): String {
+    val msg = message.trim()
+    val low = msg.lowercase()
+    return when {
+        low.contains("accesskey") ->
+            "AccessKey 无效或已删除，请在控制台「开放API → AccessKey管理」重新创建"
+        low.contains("sign") || msg.contains("签名") ->
+            "签名校验失败：SecretKey 与 AccessKey 不匹配或已重置，请重新录入账号"
+        msg.contains("实名") ->
+            "账号未完成实名认证，OpenAPI 不可用（控制台 → 实名认证）"
+        msg.contains("时间戳") || low.contains("timestamp") ->
+            "请求时间戳被拒绝：本机时钟不准，请同步系统时间后重试"
+        msg.isEmpty() -> "智星云接口错误（code=$code）"
+        else -> "智星云接口错误（code=$code）：${msg.take(200)}"
+    }
+}
+
+/** 已取到的变更是否已跨过「近 7 天」窗口下界（跨过则两个窗口均已取完，可提前停止翻页）。 */
+private fun galaxyCostWindowCovered(changes: List<GalaxyChange>, today: LocalDate): Boolean {
+    val day7 = today.minusDays(6)
+    return changes.any { it.at.toLocalDate().isBefore(day7) }
+}

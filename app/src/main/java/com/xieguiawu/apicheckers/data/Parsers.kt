@@ -1,14 +1,20 @@
 package com.xieguiawu.apicheckers.data
 
-import java.time.LocalDate
-import java.time.ZonedDateTime
+import java.security.MessageDigest
 import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
@@ -339,3 +345,337 @@ object Parsers {
     fun extractQwenSECToken(html: String): String =
         RE_QWEN_SEC_TOKEN.find(html)?.groupValues?.get(1)?.trim().orEmpty()
 }
+
+// ── 智星云 AI Galaxy（OpenAPI v2）签名与解析 ──────────────────
+// 契约与实测取证见 Go 仓库 docs/plans/2026-08-29-ai-galaxy-provider.md。
+
+/**
+ * 待签名字符串：参数名字典序升序、跳过空值、排除 sign/secret 两个键。
+ * 与官方 Golang 参考实现逐条对齐。
+ */
+fun galaxyStringToSign(params: Map<String, String>): String =
+    // ⚠️ sorted() 是 UTF-16 码元序；与 Go sort.Strings（字节序）等价的前提是
+    // 参数名恒为 ASCII（当前键集 apikey/timestamp/nonce/page/page_size/
+    // status_type 全是 ASCII）。未来新增非 ASCII 参数名时须先对齐排序规则。
+    params.keys
+        .filter { it != "sign" && it != "secret" && params[it]?.isNotEmpty() == true }
+        .sorted()
+        .joinToString("&") { "$it=${params[it]}" }
+
+/**
+ * 签名：md5(stringToSign + "&secret=" + SecretKey) 小写 hex。
+ * secret 为空时不拼尾缀（对齐官方参考实现的 if secret != "" 分支）。
+ */
+fun galaxySign(params: Map<String, String>, secret: String): String {
+    var s = galaxyStringToSign(params)
+    if (secret.isNotEmpty()) s += "&secret=$secret"
+    return MessageDigest.getInstance("MD5")
+        .digest(s.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+}
+
+// ── 实例状态 ───────────────────────────────────────────────
+
+private val galaxyStatusTexts = mapOf(
+    -2 to "已退费",
+    -1 to "启动错误",
+    0 to "已结束",
+    1 to "运行中",
+    4 to "启动中",
+    5 to "重启中",
+    7 to "重启失败",
+    8 to "磁盘保留",
+)
+
+/** 平台实例状态码 → 中文（文档「获取自主实例详情」的状态常量表），未知码回「未知(N)」。 */
+fun galaxyStatusText(status: Int): String = galaxyStatusTexts[status] ?: "未知($status)"
+
+/** 是否仍占用资源（需要用户关注的状态）。已结束/已退费是终态，展示时降级为灰。 */
+fun galaxyStatusActive(status: Int): Boolean = status in setOf(-1, 1, 4, 5, 7, 8)
+
+/**
+ * 到期时刻（Unix 秒）。平台同响应里带回 ServerTime，用 due-serverTime 差值折算
+ * 可完全规避本机时钟偏移（本机偏移一分钟就会把「33分后到期」显示成「已到期」）。
+ */
+fun galaxyDeadlineUnix(due: Long, serverTime: Long, now: ZonedDateTime): Long {
+    if (due <= 0) return 0
+    return if (serverTime > 0) now.toEpochSecond() + (due - serverTime) else due
+}
+
+/** Unix 秒 → 指定时区 RFC3339；0/负数 → 空串（无该时间）。 */
+fun galaxyRFC3339(unix: Long, zone: ZoneId): String {
+    if (unix <= 0) return ""
+    return Instant.ofEpochSecond(unix).atZone(zone).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+}
+
+/** 手机号脱敏：183****2433。非 11 位号码只保留前 3 位。 */
+fun maskPhone(s: String): String {
+    val r = s.trim().toCharArray()
+    if (r.isEmpty()) return ""
+    return if (r.size <= 7) String(r, 0, 1) + "****"
+    else String(r, 0, 3) + "****" + String(r, r.size - 4, 4)
+}
+
+/** 宽容数值解析：数字 / 数字字符串均可；缺失/非法 → null。 */
+private fun galaxyNumber(v: JsonPrimitive?): Double? =
+    v?.doubleOrNull ?: v?.content?.trim()?.toDoubleOrNull()
+
+/** 宽容取整：与 Go rawInt 同语义（"1" 与 1 都接受），缺失/非法 → 0。 */
+private fun galaxyNumInt(v: JsonPrimitive?): Int = (galaxyNumber(v) ?: 0.0).toInt()
+
+/** 宽容布尔：只认 JSON 布尔。字符串 "true"/"false"/数字/缺失一律 false
+ * （对齐 Go rawBool 口径——否则 has_more:"false" 会让 Android 继续翻页而 Go 停住）。 */
+private fun galaxyRawBool(v: JsonPrimitive?): Boolean =
+    if (v != null && !v.isString) v.booleanOrNull ?: false else false
+
+// ── 主账户信息 ─────────────────────────────────────────────
+
+@Serializable
+private data class GalaxyBalancePayload(
+    @SerialName("Name") val name: String? = null,
+    @SerialName("Phone") val phone: String? = null,
+    @SerialName("Money") val money: JsonPrimitive? = null,
+    @SerialName("PowerMoney") val powerMoney: JsonPrimitive? = null,
+    @SerialName("CreditMoneyQuota") val creditMoneyQuota: JsonPrimitive? = null,
+    @SerialName("CustomDiscount") val customDiscount: JsonPrimitive? = null,
+    @SerialName("VipLevel") val vipLevel: JsonPrimitive? = null,
+    @SerialName("Last_login_time") val lastLoginTime: JsonPrimitive? = null,
+)
+
+/**
+ * 解析 /account/get_main_account_info 的 data 节点。
+ * 数值一律宽容解析（平台偶发把金额序列化成字符串）。
+ * 最后登录时间按 [zone] 格式化（对齐 Go time.Local 口径）。
+ */
+fun parseGalaxyBalance(raw: String, zone: ZoneId = ZoneId.systemDefault()): Result<GalaxyBalance> = runCatching {
+    val p = galaxyJson.decodeFromString<GalaxyBalancePayload>(raw)
+    if (p.money == null) error("智星云账户响应缺少 Money 字段")
+    val bal = GalaxyBalance(
+        name = p.name.orEmpty().trim(),
+        phone = maskPhone(p.phone.orEmpty()),
+        money = galaxyNumber(p.money) ?: 0.0,
+        powerMoney = galaxyNumber(p.powerMoney) ?: 0.0,
+        creditMoneyQuota = galaxyNumber(p.creditMoneyQuota) ?: 0.0,
+        customDiscount = galaxyNumber(p.customDiscount) ?: 0.0,
+        vipLevel = (galaxyNumber(p.vipLevel) ?: 0.0).toInt(),
+    )
+    val lastLogin = galaxyNumLong(p.lastLoginTime)
+    if (lastLogin > 0) bal.copy(lastLoginAt = galaxyRFC3339(lastLogin, zone)) else bal
+}
+
+// ── 实例状态统计 ───────────────────────────────────────────
+
+@Serializable
+private data class GalaxyStatusCountPayload(
+    @SerialName("statusAll") val all: JsonPrimitive? = null,
+    @SerialName("statusRunning") val running: JsonPrimitive? = null,
+    @SerialName("statusKeeppedDisk") val keeppedDisk: JsonPrimitive? = null,
+    @SerialName("statusCreateError") val createError: JsonPrimitive? = null,
+    @SerialName("statusRunningError") val runningError: JsonPrimitive? = null,
+)
+
+/**
+ * 解析 /instance/get_instance_status_count 的 data 节点。
+ * statusDefault 刻意不取：实测与列表条数不一致（契约 §2.4）。
+ */
+fun parseGalaxyStatusCount(raw: String): Result<GalaxyStatusCount> = runCatching {
+    val p = galaxyJson.decodeFromString<GalaxyStatusCountPayload>(raw)
+    if (p.all == null && p.running == null) error("智星云实例统计响应为空")
+    GalaxyStatusCount(
+        all = galaxyNumInt(p.all),
+        running = galaxyNumInt(p.running),
+        keeppedDisk = galaxyNumInt(p.keeppedDisk),
+        createError = galaxyNumInt(p.createError),
+        runningError = galaxyNumInt(p.runningError),
+    )
+}
+
+// ── 实例列表 ───────────────────────────────────────────────
+//
+// 🔴 白名单解码：响应含 Init_passwd / LastInitPasswd / RdpPasswd / VncPasswd
+// 明文口令，这里只声明要用的字段，其余被 kotlinx ignoreUnknownKeys 直接丢弃——
+// 口令不可能经数据类、序列化、UI 或日志外泄。
+
+@Serializable
+private data class GalaxyInstanceListPayload(
+    val list: List<GalaxyInstanceItemPayload> = emptyList(),
+    @SerialName("total_count") val totalCount: JsonPrimitive? = null,
+    @SerialName("has_more") val hasMore: JsonPrimitive? = null,
+)
+
+@Serializable
+private data class GalaxyInstanceItemPayload(
+    @SerialName("Container_name") val containerName: String? = null,
+    @SerialName("Note") val note: String? = null,
+    @SerialName("Status") val status: JsonPrimitive? = null,
+    @SerialName("IsAbnormal") val isAbnormal: JsonPrimitive? = null,
+    @SerialName("Gpu_type") val gpuType: String? = null,
+    @SerialName("Gpu_num") val gpuNum: JsonPrimitive? = null,
+    @SerialName("Cpu_num") val cpuNum: JsonPrimitive? = null,
+    @SerialName("Memory") val memory: JsonPrimitive? = null,
+    @SerialName("District") val district: String? = null,
+    @SerialName("Host") val host: String? = null,
+    @SerialName("Url") val url: String? = null,
+    @SerialName("SshPort") val sshPort: JsonPrimitive? = null,
+    @SerialName("Image") val image: String? = null,
+    @SerialName("ContainerType") val containerType: String? = null,
+    @SerialName("Due_time") val dueTime: JsonPrimitive? = null,
+    @SerialName("DiskReleaseTime") val diskReleaseTime: JsonPrimitive? = null,
+    @SerialName("ServerTime") val serverTime: JsonPrimitive? = null,
+    @SerialName("Total_cost") val totalCost: JsonPrimitive? = null,
+    @SerialName("PayTypeFirst") val payTypeFirst: String? = null,
+    @SerialName("Ctime") val ctime: JsonPrimitive? = null,
+    @SerialName("InstanceAutorenew") val autorenew: GalaxyAutorenewPayload? = null,
+)
+
+@Serializable
+private data class GalaxyAutorenewPayload(
+    @SerialName("SubscribeStatus") val subscribeStatus: JsonPrimitive? = null,
+    @SerialName("CancelSubscribeAt") val cancelSubscribeAt: JsonPrimitive? = null,
+)
+
+/** 实例列表单页解析结果（仓库层按 hasMore 翻页）。 */
+data class GalaxyInstancesPage(val instances: List<GalaxyInstance>, val total: Int, val hasMore: Boolean)
+
+/**
+ * 解析 /instance/get_instance_list 的 data 节点。
+ * now 用于 ServerTime 时钟折算到期时刻（测试传固定值保证确定性）。
+ */
+fun parseGalaxyInstances(raw: String, now: ZonedDateTime): Result<GalaxyInstancesPage> = runCatching {
+    val p = galaxyJson.decodeFromString<GalaxyInstanceListPayload>(raw)
+    val zone = now.zone
+    val out = p.list.map { it ->
+        val status = galaxyNumInt(it.status)
+        val due = galaxyNumLong(it.dueTime)
+        val server = galaxyNumLong(it.serverTime)
+        val autorenew = it.autorenew
+        val cancelled = autorenew?.cancelSubscribeAt?.contentOrNull != null
+        GalaxyInstance(
+            name = it.containerName.orEmpty().trim(),
+            note = it.note.orEmpty().trim(),
+            status = status,
+            statusText = galaxyStatusText(status),
+            abnormal = galaxyNumInt(it.isAbnormal) != 0,
+            gpuType = it.gpuType.orEmpty().trim(),
+            gpuNum = galaxyNumInt(it.gpuNum),
+            cpuNum = galaxyNumInt(it.cpuNum),
+            memoryGb = galaxyNumInt(it.memory),
+            district = it.district.orEmpty().trim(),
+            host = it.host.orEmpty().trim(),
+            sshHost = it.url.orEmpty().trim(),
+            sshPort = galaxyNumInt(it.sshPort),
+            image = it.image.orEmpty().trim(),
+            kind = it.containerType.orEmpty().trim(),
+            totalCost = galaxyNumber(it.totalCost) ?: 0.0,
+            payType = it.payTypeFirst.orEmpty().trim(),
+            dueAt = galaxyRFC3339(galaxyDeadlineUnix(due, server, now), zone),
+            diskReleaseAt = galaxyRFC3339(galaxyNumLong(it.diskReleaseTime), zone),
+            createdAt = galaxyRFC3339(galaxyNumLong(it.ctime), zone),
+            autoRenew = autorenew != null && galaxyNumInt(autorenew.subscribeStatus) == 1 && !cancelled,
+        )
+    }
+    GalaxyInstancesPage(
+        instances = out,
+        total = galaxyNumInt(p.totalCount),
+        hasMore = galaxyRawBool(p.hasMore),
+    )
+}
+
+// ── 余额变更明细 ───────────────────────────────────────────
+
+@Serializable
+private data class GalaxyChangesPayload(
+    val list: List<GalaxyChangeItemPayload> = emptyList(),
+    @SerialName("has_more") val hasMore: JsonPrimitive? = null,
+)
+
+@Serializable
+private data class GalaxyChangeItemPayload(
+    @SerialName("CreateTime") val createTime: String? = null,
+    @SerialName("Remark") val remark: String? = null,
+    @SerialName("DiffMoney") val diffMoney: JsonPrimitive? = null,
+    @SerialName("DiffPower") val diffPower: JsonPrimitive? = null,
+    @SerialName("MoneyLeft") val moneyLeft: JsonPrimitive? = null,
+)
+
+/** 单条余额变更（内部结构，保留 ZonedDateTime 供聚合）。 */
+data class GalaxyChange(
+    val at: ZonedDateTime,
+    val remark: String,
+    val spent: Double, // 正数＝扣费，负数＝返还
+    val left: Double,
+)
+
+/** 余额变更单页解析结果。 */
+data class GalaxyChangesPage(val changes: List<GalaxyChange>, val hasMore: Boolean)
+
+private val galaxyCreateTimeFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+
+/** 解析 Unix 秒（数值字符串与数字均可），缺失/非法 → 0。 */
+private fun galaxyNumLong(v: JsonPrimitive?): Long = (galaxyNumber(v) ?: 0.0).toLong()
+
+/**
+ * 解析 /billing/get_balance_change_list 的 data 节点。
+ * 消费额 = −(ΔMoney + ΔPower)：实测「复制启动」DiffMoney=-0.155 + DiffPower=-0.17
+ * 合计 0.325，与该实例 Total_cost 精确吻合（两种资金融合计费）。
+ * CreateTime 按 [zone] 解析（对齐 Go time.ParseInLocation(…, time.Local)）。
+ */
+fun parseGalaxyChanges(raw: String, zone: ZoneId = ZoneId.systemDefault()): Result<GalaxyChangesPage> = runCatching {
+    val p = galaxyJson.decodeFromString<GalaxyChangesPayload>(raw)
+    val out = p.list.mapNotNull { it ->
+        val t = runCatching {
+            LocalDateTime.parse(it.createTime.orEmpty().trim(), galaxyCreateTimeFmt).atZone(zone)
+        }.getOrNull() ?: return@mapNotNull null // 单条时间格式异常不致命：跳过该条
+        GalaxyChange(
+            at = t,
+            remark = it.remark.orEmpty().trim(),
+            spent = -((galaxyNumber(it.diffMoney) ?: 0.0) + (galaxyNumber(it.diffPower) ?: 0.0)),
+            left = galaxyNumber(it.moneyLeft) ?: 0.0,
+        )
+    }
+    GalaxyChangesPage(changes = out, hasMore = galaxyRawBool(p.hasMore))
+}
+
+/**
+ * 聚合今日 / 近 7 天净消耗（近 7 天含今日，与 DeepSeek 侧 aggregateCost 同一口径）。
+ * 明细按时间倒序返回，所以只要看到一条早于窗口下界的记录，该窗口就取完了；
+ * 否则只能给下限（*Partial=true，渲染层加「≥」）。
+ */
+fun aggregateGalaxyCost(changes: List<GalaxyChange>, hasMore: Boolean, now: ZonedDateTime): GalaxyCost {
+    val ref = now.toLocalDate()
+    val day7 = ref.minusDays(6)
+    var today = 0.0
+    var week = 0.0
+    var oldest: LocalDate = ref.plusDays(1) // 哨兵：比今日更晚，保证有数据时会被下调
+    for (c in changes) {
+        val day = c.at.toLocalDate()
+        if (day.isBefore(oldest)) oldest = day
+        if (c.spent < 0) continue // 纯返还（充值/退款）不计入消耗
+        if (!day.isBefore(ref)) today += c.spent
+        if (!day.isBefore(day7)) week += c.spent
+    }
+    var todayPartial = false
+    var weekPartial = false
+    if (hasMore) {
+        // 还能往前翻：只有已经看到窗口下界之前的记录，才能断定窗口取完
+        todayPartial = !oldest.isBefore(ref)
+        weekPartial = !oldest.isBefore(day7)
+    }
+    return GalaxyCost(
+        today = today,
+        last7d = week,
+        todayPartial = todayPartial,
+        weekPartial = weekPartial,
+        entries = changes.take(5).map {
+            GalaxyCostEntry(
+                time = it.at.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+                remark = it.remark,
+                spent = it.spent,
+                left = it.left,
+            )
+        },
+    )
+}
+
+/** galaxy 解析共用 Json：ignoreUnknownKeys（口令等未知字段直接丢弃）。 */
+private val galaxyJson = Json { ignoreUnknownKeys = true }

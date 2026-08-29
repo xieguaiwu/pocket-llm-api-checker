@@ -13,6 +13,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.xieguiawu.apicheckers.data.SecureSettings
 import com.xieguiawu.apicheckers.ui.DetailScreen
+import com.xieguiawu.apicheckers.ui.GalaxyDetailScreen
 import com.xieguiawu.apicheckers.ui.HomeScreen
 import com.xieguiawu.apicheckers.ui.QwenDetailScreen
 import com.xieguiawu.apicheckers.ui.SettingsScreen
@@ -48,6 +49,7 @@ private fun AppNav(vm: AppViewModel) {
                 vm = vm,
                 onOpenAccount = { nav.navigate("account/$it") },
                 onOpenQwen = { nav.navigate("qwen/$it") },
+                onOpenGalaxy = { nav.navigate("galaxy/$it") },
                 onOpenSettings = { nav.navigate("settings") },
             )
         }
@@ -60,6 +62,13 @@ private fun AppNav(vm: AppViewModel) {
         }
         composable("qwen/{id}") { backStackEntry ->
             QwenDetailScreen(
+                vm = vm,
+                id = backStackEntry.arguments?.getString("id") ?: "",
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable("galaxy/{id}") { backStackEntry ->
+            GalaxyDetailScreen(
                 vm = vm,
                 id = backStackEntry.arguments?.getString("id") ?: "",
                 onBack = { nav.popBackStack() },

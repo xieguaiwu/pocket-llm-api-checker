@@ -52,6 +52,8 @@ import androidx.compose.ui.unit.sp
 import com.xieguiawu.apicheckers.AppViewModel
 import com.xieguiawu.apicheckers.data.Account
 import com.xieguiawu.apicheckers.data.SecureSettings
+import com.xieguiawu.apicheckers.data.normalizeGalaxyAccessKey
+import com.xieguiawu.apicheckers.data.normalizeGalaxySecretKey
 import com.xieguiawu.apicheckers.ui.theme.Accent
 import com.xieguiawu.apicheckers.ui.theme.Bg
 import com.xieguiawu.apicheckers.ui.theme.Card
@@ -100,6 +102,16 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
     var showQwenKey by remember { mutableStateOf(false) }
     var showQwenCookie by remember { mutableStateOf(false) }
     var qwenRegionDialog by remember { mutableStateOf(false) }
+    // 智星云 AI Galaxy 账号
+    var galaxyAccounts by remember { mutableStateOf(SecureSettings.getGalaxyAccounts()) }
+    var galaxyRenaming by remember { mutableStateOf<com.xieguiawu.apicheckers.data.GalaxyAccount?>(null) }
+    var galaxyRenameText by remember { mutableStateOf("") }
+    var galaxyEditing by remember { mutableStateOf(false) }
+    var galaxyName by remember { mutableStateOf("") }
+    var galaxyAccessKey by remember { mutableStateOf("") }
+    var galaxySecretKey by remember { mutableStateOf("") }
+    var showGalaxySecretKey by remember { mutableStateOf(false) }
+    var galaxyFormError by remember { mutableStateOf<String?>(null) }
     // 操作反馈
     var hint by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -596,6 +608,138 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                     }
                 }
             }
+
+            // ── 智星云 AI Galaxy 账号分区 ──
+            item(key = "galaxy") {
+                SectionCard("智星云 AI Galaxy 账号") {
+                    if (galaxyAccounts.isEmpty()) {
+                        Text("暂无智星云账号", color = TextSub, fontSize = 13.sp)
+                    }
+                    galaxyAccounts.forEach { acc ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(acc.name, color = TextMain, fontSize = 14.sp)
+                                Text(
+                                    keyTail(acc.accessKey) + if (acc.secretKey.isNotBlank()) " · SK" else "",
+                                    color = TextSub,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                            IconButton(onClick = {
+                                galaxyRenaming = acc
+                                galaxyRenameText = acc.name
+                            }) {
+                                Icon(Icons.Filled.Edit, contentDescription = "重命名智星云账号", tint = TextSub)
+                            }
+                            IconButton(onClick = {
+                                SecureSettings.deleteGalaxyAccount(acc.id)
+                                galaxyAccounts = SecureSettings.getGalaxyAccounts()
+                                vm.refreshAll()
+                                flashHint("已删除智星云账号「${acc.name}」")
+                            }) {
+                                Icon(Icons.Filled.Delete, contentDescription = "删除智星云账号", tint = Danger)
+                            }
+                        }
+                    }
+
+                    if (galaxyEditing) {
+                        HorizontalDivider(color = Divider, modifier = Modifier.padding(vertical = 4.dp))
+                        OutlinedTextField(
+                            value = galaxyName,
+                            onValueChange = { galaxyName = it },
+                            label = { Text("名称") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = galaxyAccessKey,
+                            onValueChange = { galaxyAccessKey = it },
+                            label = { Text("AccessKey（必填）") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = galaxySecretKey,
+                            onValueChange = { galaxySecretKey = it },
+                            label = { Text("SecretKey（必填，密码遮罩）") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            visualTransformation = if (showGalaxySecretKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showGalaxySecretKey = !showGalaxySecretKey }) {
+                                    Icon(
+                                        if (showGalaxySecretKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                        contentDescription = if (showGalaxySecretKey) "隐藏" else "显示",
+                                        tint = TextSub,
+                                    )
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "获取：智星云控制台 → 开放API → AccessKey管理 → 创建（需完成实名认证）。" +
+                                "粘贴时首尾空白会自动清理。",
+                            color = TextSub,
+                            fontSize = 12.sp,
+                        )
+                        galaxyFormError?.let { Text(it, color = Danger, fontSize = 13.sp) }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Button(onClick = {
+                                val ak = normalizeGalaxyAccessKey(galaxyAccessKey)
+                                val sk = normalizeGalaxySecretKey(galaxySecretKey)
+                                if (ak.isBlank() || sk.isBlank()) {
+                                    galaxyFormError = "AccessKey 与 SecretKey 均为必填"
+                                } else {
+                                    val name = galaxyName.trim().ifEmpty { "智星云 ${galaxyAccounts.size + 1}" }
+                                    SecureSettings.saveGalaxyAccount(
+                                        com.xieguiawu.apicheckers.data.GalaxyAccount(
+                                            id = java.util.UUID.randomUUID().toString(),
+                                            name = name,
+                                            accessKey = ak,
+                                            secretKey = sk,
+                                        ),
+                                    )
+                                    galaxyAccounts = SecureSettings.getGalaxyAccounts()
+                                    galaxyEditing = false
+                                    galaxyName = ""
+                                    galaxyAccessKey = ""
+                                    galaxySecretKey = ""
+                                    galaxyFormError = null
+                                    vm.refreshAll()
+                                    flashHint("智星云账号「$name」已保存，正在刷新数据")
+                                }
+                            }) {
+                                Text("保存账号")
+                            }
+                            TextButton(onClick = {
+                                galaxyEditing = false
+                                galaxyName = ""
+                                galaxyAccessKey = ""
+                                galaxySecretKey = ""
+                                galaxyFormError = null
+                            }) {
+                                Text("取消", color = TextSub)
+                            }
+                        }
+                    } else {
+                        TextButton(onClick = {
+                            galaxyEditing = true
+                            galaxyName = "智星云 ${galaxyAccounts.size + 1}"
+                        }) {
+                            Icon(Icons.Filled.Add, contentDescription = null, tint = Accent)
+                            Spacer(Modifier.width(4.dp))
+                            Text("添加智星云账号", color = Accent, fontSize = 14.sp)
+                        }
+                    }
+                }
+            }
         }
 
         // 账号重命名对话框
@@ -704,6 +848,40 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                 },
                 dismissButton = {
                     TextButton(onClick = { qwenRenaming = null }) { Text("取消", color = TextSub) }
+                },
+            )
+        }
+
+        // 智星云账号重命名对话框
+        galaxyRenaming?.let { acc ->
+            AlertDialog(
+                onDismissRequest = { galaxyRenaming = null },
+                containerColor = Card,
+                titleContentColor = TextMain,
+                textContentColor = TextMain,
+                title = { Text("重命名智星云账号") },
+                text = {
+                    OutlinedTextField(
+                        value = galaxyRenameText,
+                        onValueChange = { galaxyRenameText = it },
+                        singleLine = true,
+                        colors = fieldColors,
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val newName = galaxyRenameText.trim()
+                        if (newName.isNotBlank()) {
+                            SecureSettings.saveGalaxyAccount(acc.copy(name = newName))
+                            galaxyAccounts = SecureSettings.getGalaxyAccounts()
+                            vm.refreshAll()
+                            flashHint("已重命名为「${newName}」")
+                        }
+                        galaxyRenaming = null
+                    }) { Text("保存") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { galaxyRenaming = null }) { Text("取消", color = TextSub) }
                 },
             )
         }

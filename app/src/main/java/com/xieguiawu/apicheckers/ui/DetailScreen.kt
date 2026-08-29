@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,24 +33,33 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xieguiawu.apicheckers.AccountUi
 import com.xieguiawu.apicheckers.AppViewModel
+import com.xieguiawu.apicheckers.GalaxyUi
 import com.xieguiawu.apicheckers.QwenUi
+import com.xieguiawu.apicheckers.data.GalaxyInstance
 import com.xieguiawu.apicheckers.data.GoWindow
 import com.xieguiawu.apicheckers.data.Parsers
 import com.xieguiawu.apicheckers.data.QwenWindow
 import com.xieguiawu.apicheckers.data.qwenRegionDisplayName
+import com.xieguiawu.apicheckers.ui.theme.Accent
 import com.xieguiawu.apicheckers.ui.theme.Bg
 import com.xieguiawu.apicheckers.ui.theme.Card
 import com.xieguiawu.apicheckers.ui.theme.Danger
 import com.xieguiawu.apicheckers.ui.theme.Divider
+import com.xieguiawu.apicheckers.ui.theme.Ok
 import com.xieguiawu.apicheckers.ui.theme.TextMain
 import com.xieguiawu.apicheckers.ui.theme.TextSub
+import com.xieguiawu.apicheckers.ui.theme.Warn
 import java.time.Duration
 import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlinx.coroutines.delay
 
 // ── 账号详情页 ─────────────────────────────────────────────────
@@ -401,6 +411,333 @@ private fun QwenModelsCard(q: QwenUi) {
                             modifier = Modifier
                                 .background(Divider, RoundedCornerShape(4.dp))
                                 .padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── 智星云 AI Galaxy 详情页 ───────────────────────────────────
+
+private val galaxyMonthDayFmt = DateTimeFormatter.ofPattern("MM-dd HH:mm")
+
+@Composable
+fun GalaxyDetailScreen(vm: AppViewModel, id: String, onBack: () -> Unit) {
+    val ui by vm.uiState.collectAsState()
+    val g = ui.galaxyList.firstOrNull { it.account?.id == id }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Bg)
+            .safeDrawingPadding()
+            .padding(horizontal = 20.dp),
+    ) {
+        // 顶栏：返回 + 账号名 + 手动刷新
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = TextMain)
+            }
+            Text(
+                g?.account?.name ?: "智星云详情",
+                color = TextMain,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = { vm.refreshGalaxy(id) }) {
+                Icon(Icons.Filled.Refresh, contentDescription = "刷新", tint = TextSub)
+            }
+        }
+        if (g == null) {
+            Text(
+                "账号不存在或已被删除",
+                color = TextSub,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+            ) {
+                item(key = "balance") { GalaxyBalanceCard(g) }
+                item(key = "cost") { GalaxyCostCard(g) }
+                item(key = "status") { GalaxyStatusCard(g) }
+                item(key = "hourly") { GalaxyHourlyCard(g) }
+                g.instances.forEachIndexed { i, inst ->
+                    // 稳定 key：刷新后条目不因下标复用错位（Container_name 全平台唯一）
+                    item(key = "inst-${inst.name}-${inst.host}") { GalaxyInstanceCard(inst) }
+                }
+                if (g.instances.isEmpty() && g.status?.running == 0 && g.error == null) {
+                    item(key = "inst-empty") {
+                        Text(
+                            "无活跃实例",
+                            color = TextSub,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    }
+                }
+                g.error?.let { err -> item(key = "error") { ErrorCard(err) } }
+            }
+        }
+    }
+}
+
+/** 余额卡：三列分列展示（余额/算力券/信用额度，语义不同不互相折算）。 */
+@Composable
+private fun GalaxyBalanceCard(g: GalaxyUi) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            val bal = g.balance
+            if (bal != null) {
+                Row {
+                    GalaxyMoneyColumn("余额", bal.money, galaxyBalanceColor(bal.money))
+                    GalaxyMoneyColumn("算力券", bal.powerMoney, TextMain)
+                    GalaxyMoneyColumn("信用额度", bal.creditMoneyQuota, TextMain)
+                }
+                // 账户行：VIP + 脱敏手机（+ 折扣，同 Go 侧 meta 行）
+                val meta = buildString {
+                    append("VIP${bal.vipLevel}")
+                    if (bal.customDiscount > 0 && bal.customDiscount < 1) {
+                        append(" · 折扣 " + "%.2f".format(Locale.US, bal.customDiscount))
+                    }
+                    if (bal.phone.isNotEmpty()) append(" · " + bal.phone)
+                    if (bal.name.isNotEmpty()) append(" · " + bal.name)
+                }
+                Text(meta, color = TextSub, fontSize = 13.sp)
+            } else if (g.error == null) {
+                Text("加载中…", color = TextSub, fontSize = 14.sp)
+            } else {
+                Text("余额 暂无数据", color = TextSub, fontSize = 14.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.GalaxyMoneyColumn(label: String, value: Double, color: Color) {
+    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, color = TextSub, fontSize = 12.sp)
+        Text("¥${fmt(value)}", color = color, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** 消耗卡：今日 / 近 7 天；未翻完的窗口数字前加 ≥ 并灰字「明细未翻完」。 */
+@Composable
+private fun GalaxyCostCard(g: GalaxyUi) {
+    val cost = g.cost ?: return
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("今日消耗 ", color = TextSub, fontSize = 13.sp)
+                Text(
+                    (if (cost.todayPartial) "≥" else "") + "¥${fmt(cost.today)}",
+                    color = TextMain,
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.width(12.dp))
+                Text("近7天 ", color = TextSub, fontSize = 13.sp)
+                Text(
+                    (if (cost.weekPartial) "≥" else "") + "¥${fmt(cost.last7d)}",
+                    color = TextMain,
+                    fontSize = 13.sp,
+                )
+            }
+            if (cost.todayPartial || cost.weekPartial) {
+                Text("明细未翻完", color = TextSub, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/** 实例统计卡：只展示实测自洽的五项（statusDefault 弃用，契约 §2.4）。 */
+@Composable
+private fun GalaxyStatusCard(g: GalaxyUi) {
+    val s = g.status ?: return
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("实例", color = TextSub, fontSize = 13.sp)
+            Spacer(Modifier.width(8.dp))
+            Text("运行中 ${s.running}", color = TextMain, fontSize = 13.sp)
+            Text(" · 磁盘保留 ${s.keeppedDisk}", color = TextSub, fontSize = 13.sp)
+            Text(
+                " · 启动错误 ${s.createError}",
+                color = if (s.createError > 0) Danger else TextSub,
+                fontSize = 13.sp,
+            )
+            Text(
+                " · 运行异常 ${s.runningError}",
+                color = if (s.runningError > 0) Danger else TextSub,
+                fontSize = 13.sp,
+            )
+            Text(" · 全部 ${s.all}", color = TextSub, fontSize = 13.sp)
+        }
+    }
+}
+
+/** 时价卡：运行中合计时价 + 「约可支撑 N」（fund = 现金 + 算力券，同 Go 侧口径）。 */
+@Composable
+private fun GalaxyHourlyCard(g: GalaxyUi) {
+    val hourly = g.hourlyCost
+    val bal = g.balance ?: return
+    if (hourly <= 0) return
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("时价 ${galaxyUnitPrice(hourly)}", color = TextMain, fontSize = 13.sp)
+            Spacer(Modifier.width(8.dp))
+            val fund = bal.money + bal.powerMoney
+            when {
+                fund <= 0 -> Text("余额不足", color = Danger, fontSize = 13.sp)
+                fund / hourly < 24 -> Text(
+                    "约可支撑 ${galaxySpanShort((fund / hourly * 3_600_000).toLong())}",
+                    color = Warn,
+                    fontSize = 13.sp,
+                )
+                else -> Text("约 ${(fund / hourly / 24).toInt()} 天", color = TextMain, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+/** 实例状态徽章颜色：运行异常强制红（对照 Go GalaxyStatusColor）。 */
+private fun galaxyStatusColor(inst: GalaxyInstance): Color = when {
+    inst.abnormal && inst.status in setOf(1, 4, 5) -> Danger
+    inst.status == 1 -> Ok
+    inst.status == 4 || inst.status == 5 -> Warn
+    inst.status == -1 || inst.status == 7 -> Danger
+    inst.status == 8 -> Accent
+    else -> TextSub
+}
+
+/** GPU 型号简写（去厂商前缀）；无卡实例回「CPU 实例」（同 Go galaxyGpuLabel）。 */
+private fun galaxyGpuLabel(inst: GalaxyInstance): String {
+    if (inst.gpuNum <= 0) return "CPU 实例"
+    var g = inst.gpuType.trim()
+    for (pre in listOf("GeForce ", "NVIDIA ", "Tesla ")) {
+        if (g.startsWith(pre)) g = g.removePrefix(pre)
+    }
+    return "${g}×${inst.gpuNum}"
+}
+
+/** 时价文本：保留三位小数并去尾零（¥0.325/时 / ¥0.87/时）。 */
+private fun galaxyUnitPrice(v: Double): String {
+    var s = "%.3f".format(Locale.US, v).trimEnd('0').trimEnd('.')
+    if (s.isEmpty() || s == "-") s = "0"
+    return "¥$s/时"
+}
+
+/**
+ * 活跃实例卡：机名 + ssh 地址 + 状态徽章 + 配置/时价/自动续费 + 到期倒计时恒显。
+ * 🔴 时间信息恒显：异常徽章与倒计时并存，禁止用徽章替代倒计时（§六）。
+ */
+@Composable
+private fun GalaxyInstanceCard(inst: GalaxyInstance) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            // 机名 + ssh 地址:端口
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    inst.host.ifBlank { inst.name },
+                    color = TextMain,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                if (inst.sshHost.isNotEmpty() || inst.sshPort > 0) {
+                    Text("${inst.sshHost}:${inst.sshPort}", color = TextSub, fontSize = 12.sp)
+                }
+            }
+            // 状态徽章 + 配置摘要
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val color = galaxyStatusColor(inst)
+                val badge = if (inst.abnormal && inst.status in setOf(1, 4, 5)) {
+                    inst.statusText + "·异常"
+                } else {
+                    inst.statusText
+                }
+                Text(
+                    badge,
+                    color = color,
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .background(Divider, RoundedCornerShape(4.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(galaxyGpuLabel(inst), color = TextSub, fontSize = 13.sp)
+                Text(" · ${inst.cpuNum}核/${inst.memoryGb}G", color = TextSub, fontSize = 13.sp)
+            }
+            val extras = buildList {
+                if (inst.district.isNotEmpty()) add(inst.district)
+                if (inst.totalCost > 0) add(galaxyUnitPrice(inst.totalCost))
+                if (inst.autoRenew) add("自动续费")
+                if (inst.note.isNotEmpty()) add(inst.note)
+            }
+            if (extras.isNotEmpty()) {
+                Text(extras.joinToString(" · "), color = TextSub, fontSize = 13.sp)
+            }
+            // 🔴 到期倒计时恒显（与状态徽章并存，不因异常而省略）
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                GalaxyCountdownText(inst.dueAt)
+                val dueInstant = runCatching { Instant.parse(inst.dueAt) }.getOrNull()
+                if (dueInstant != null) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "（${dueInstant.atZone(ZoneId.systemDefault()).format(galaxyMonthDayFmt)}）",
+                        color = TextSub,
+                        fontSize = 12.sp,
+                    )
+                }
+                if (inst.status == 8 && inst.diskReleaseAt.isNotEmpty()) {
+                    val rel = runCatching { Instant.parse(inst.diskReleaseAt) }.getOrNull()
+                    if (rel != null) {
+                        Text(
+                            " · 磁盘 ${rel.atZone(ZoneId.systemDefault()).format(galaxyMonthDayFmt)} 释放",
+                            color = TextSub,
+                            fontSize = 12.sp,
                         )
                     }
                 }

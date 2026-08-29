@@ -202,6 +202,25 @@ object SecureSettings {
         prefs.edit().putString("qwen_accounts_json", enc(json.encodeToString(list))).apply()
     }
 
+    // 智星云 AI Galaxy 账号（整体 JSON 加密存储，与 qwen_accounts 同写法）
+    fun getGalaxyAccounts(): List<GalaxyAccount> {
+        val raw = prefs.getString("galaxy_accounts_json", "[]") ?: "[]"
+        return runCatching { json.decodeFromString<List<GalaxyAccount>>(dec(raw)) }.getOrDefault(emptyList())
+    }
+
+    fun saveGalaxyAccount(a: GalaxyAccount) {
+        val list = getGalaxyAccounts().toMutableList()
+        val idx = list.indexOfFirst { it.id == a.id }
+        if (idx >= 0) list[idx] = a else list.add(a)
+        prefs.edit().putString("galaxy_accounts_json", enc(json.encodeToString(list))).apply()
+        if (runCatching { dec(enc(json.encodeToString(list))) }.isSuccess) securityWarning = null
+    }
+
+    fun deleteGalaxyAccount(id: String) {
+        val list = getGalaxyAccounts().filterNot { it.id == id }
+        prefs.edit().putString("galaxy_accounts_json", enc(json.encodeToString(list))).apply()
+    }
+
     // 最近更新时间
     fun lastUpdate(key: String): Long = prefs.getLong("last_update_$key", 0L)
     fun setLastUpdate(key: String, t: Long) { prefs.edit().putLong("last_update_$key", t).apply() }

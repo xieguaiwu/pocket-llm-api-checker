@@ -7,6 +7,13 @@ import com.xieguiawu.apicheckers.data.DeepSeekAccount
 import com.xieguiawu.apicheckers.data.DeepSeekBalance
 import com.xieguiawu.apicheckers.data.DeepSeekCost
 import com.xieguiawu.apicheckers.data.DeepSeekRepo
+import com.xieguiawu.apicheckers.data.GalaxyAccount
+import com.xieguiawu.apicheckers.data.GalaxyBalance
+import com.xieguiawu.apicheckers.data.GalaxyCost
+import com.xieguiawu.apicheckers.data.GalaxyInstance
+import com.xieguiawu.apicheckers.data.GalaxyRepo
+import com.xieguiawu.apicheckers.data.GalaxyStatusCount
+import com.xieguiawu.apicheckers.data.GalaxyStatusDefault
 import com.xieguiawu.apicheckers.data.GoUsage
 import com.xieguiawu.apicheckers.data.OpenCodeRepo
 import com.xieguiawu.apicheckers.data.QwenAccount
@@ -16,6 +23,7 @@ import com.xieguiawu.apicheckers.data.QwenUsage
 import com.xieguiawu.apicheckers.data.SecureSettings
 import com.xieguiawu.apicheckers.data.ZenBilling
 import com.xieguiawu.apicheckers.data.Account
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,11 +63,30 @@ data class QwenUi(
     val keyConfigured: Boolean get() = account?.apiKey?.isNotBlank() == true
 }
 
+/** 单个智星云账号的 UI 状态。余额必需；统计/实例/消耗任一失败只影响该段（错误合并进 error）。 */
+data class GalaxyUi(
+    val account: GalaxyAccount? = null,
+    val balance: GalaxyBalance? = null,
+    val status: GalaxyStatusCount? = null,
+    val instances: List<GalaxyInstance> = emptyList(),
+    val cost: GalaxyCost? = null,
+    val error: String? = null,
+    val loading: Boolean = false,
+) {
+    val keyConfigured: Boolean get() = account?.keyConfigured == true
+
+    /** 运行中/启动中/重启中实例的合计时价（元/时）——余额还能撑多久算得出来 */
+    val hourlyCost: Double
+        get() = instances.filter { it.status == 1 || it.status == 4 || it.status == 5 }
+            .sumOf { it.totalCost }
+}
+
 /** 全局 UI 状态 */
 data class UiState(
     val deepSeekList: List<DeepSeekUi> = emptyList(),
     val accounts: List<AccountUi> = emptyList(),
     val qwenList: List<QwenUi> = emptyList(),
+    val galaxyList: List<GalaxyUi> = emptyList(),
     val refreshing: Boolean = false,
     val lastUpdated: Long = 0L,
 )
@@ -70,6 +97,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val deepSeekRepo = DeepSeekRepo()
     private val openCodeRepo = OpenCodeRepo()
     private val qwenRepo = QwenRepo()
+    private val galaxyRepo = GalaxyRepo()
     private val _ui = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _ui.asStateFlow()
 
@@ -85,10 +113,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val dsAccounts = SecureSettings.getDeepSeekAccounts().map { DeepSeekUi(account = it) }
         val accounts = SecureSettings.getAccounts().map { AccountUi(it) }
         val qwenAccounts = SecureSettings.getQwenAccounts().map { QwenUi(account = it) }
-        _ui.update { it.copy(deepSeekList = dsAccounts, accounts = accounts, qwenList = qwenAccounts) }
+        val galaxyAccounts = SecureSettings.getGalaxyAccounts().map { GalaxyUi(account = it) }
+        _ui.update {
+            it.copy(
+                deepSeekList = dsAccounts,
+                accounts = accounts,
+                qwenList = qwenAccounts,
+                galaxyList = galaxyAccounts,
+            )
+        }
     }
 
-    /** 刷新全部数据（DeepSeek + OpenCode + Qwen，并行）。重入保护：刷新中忽略再次触发 */
+    /** 刷新全部数据（DeepSeek + OpenCode + Qwen + 智星云，并行）。重入保护：刷新中忽略再次触发 */
     fun refreshAll() {
         if (_ui.value.refreshing) return
         viewModelScope.launch {
@@ -98,6 +134,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val freshDs = SecureSettings.getDeepSeekAccounts()
             val fresh = SecureSettings.getAccounts()
             val freshQwen = SecureSettings.getQwenAccounts()
+            val freshGalaxy = SecureSettings.getGalaxyAccounts()
             _ui.update { st ->
                 val dsMerged = freshDs.map { acc ->
                     st.deepSeekList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: DeepSeekUi(account = acc)
@@ -108,13 +145,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val qwenMerged = freshQwen.map { acc ->
                     st.qwenList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: QwenUi(account = acc)
                 }
-                st.copy(deepSeekList = dsMerged, accounts = merged, qwenList = qwenMerged)
+                val galaxyMerged = freshGalaxy.map { acc ->
+                    st.galaxyList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: GalaxyUi(account = acc)
+                }
+                st.copy(deepSeekList = dsMerged, accounts = merged, qwenList = qwenMerged, galaxyList = galaxyMerged)
             }
-            // 并行刷新所有 DeepSeek / OpenCode / Qwen 账号
+            // 并行刷新所有 DeepSeek / OpenCode / Qwen / 智星云账号
             kotlinx.coroutines.coroutineScope {
                 freshDs.forEach { launch { refreshDeepSeekNow(it.id) } }
                 fresh.forEach { launch { refreshAccountNow(it.id) } }
                 freshQwen.forEach { launch { refreshQwenNow(it.id) } }
+                freshGalaxy.forEach { launch { refreshGalaxyNow(it.id) } }
             }
             val now = System.currentTimeMillis()
             _ui.update { it.copy(refreshing = false, lastUpdated = now) }
@@ -217,4 +258,60 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             })
         }
     }
+
+    /**
+     * 刷新单个智星云账号：余额/统计/实例/消耗四类并行（同 Go refreshGalaxy）。
+     * 任一路失败不中断其余路；部分失败时既保留已成功数据又透出 error。
+     */
+    fun refreshGalaxy(id: String) {
+        viewModelScope.launch { refreshGalaxyNow(id) }
+    }
+
+    private suspend fun refreshGalaxyNow(id: String) {
+        val acc = SecureSettings.getGalaxyAccounts().firstOrNull { it.id == id } ?: return
+        _ui.update { st ->
+            st.copy(galaxyList = st.galaxyList.map {
+                if (it.account?.id == id) it.copy(loading = true, error = null) else it
+            })
+        }
+        val r = kotlinx.coroutines.coroutineScope {
+            val bal = async { galaxyRepo.balance(acc) }
+            val cnt = async { galaxyRepo.statusCount(acc) }
+            val inst = async { galaxyRepo.instances(acc, GalaxyStatusDefault, GalaxyInstanceLimit) }
+            val cost = async { galaxyRepo.cost(acc) }
+            GalaxyRefreshResults(bal.await(), cnt.await(), inst.await(), cost.await())
+        }
+        val error = listOfNotNull(
+            r.balance.exceptionOrNull()?.message,
+            r.status.exceptionOrNull()?.message,
+            r.instances.exceptionOrNull()?.message,
+            r.cost.exceptionOrNull()?.message,
+        ).joinToString("\n").ifEmpty { null }
+        _ui.update { st ->
+            st.copy(galaxyList = st.galaxyList.map {
+                if (it.account?.id == id) GalaxyUi(
+                    account = acc,
+                    balance = r.balance.getOrNull(),
+                    status = r.status.getOrNull(),
+                    instances = r.instances.getOrNull() ?: emptyList(),
+                    cost = r.cost.getOrNull(),
+                    error = error,
+                    loading = false,
+                ) else it
+            })
+        }
+    }
+
+    companion object {
+        /** 单次刷新展示的活跃实例上限（防止大账号拉穿，同 Go GalaxyInstanceLimit） */
+        const val GalaxyInstanceLimit = 20
+    }
 }
+
+/** 智星云四路并行拉取的结果集合。 */
+private data class GalaxyRefreshResults(
+    val balance: Result<GalaxyBalance>,
+    val status: Result<GalaxyStatusCount>,
+    val instances: Result<List<GalaxyInstance>>,
+    val cost: Result<GalaxyCost>,
+)

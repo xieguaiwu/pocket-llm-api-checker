@@ -157,3 +157,123 @@ data class QwenModelsPayload(val data: List<QwenModelItem> = emptyList())
 
 @Serializable
 data class QwenModelItem(val id: String = "")
+
+// ── 智星云 AI Galaxy（GPU 算力云） ────────────────────────────
+//
+// 序列化名与 Go 姊妹项目 models.go 的 json tag 一一对应（snake_case），
+// 便于共享 fixture 与 --json 输出对照。
+
+/**
+ * 智星云账号。凭据 = 控制台「开放API → AccessKey管理」创建的 AccessKey/SecretKey
+ * （需先完成实名认证）；两者缺一不可，故无 HasXxx 可选分支。
+ */
+@Serializable
+data class GalaxyAccount(
+    val id: String,
+    val name: String,
+    val accessKey: String,
+    val secretKey: String,
+) {
+    /** AccessKey 与 SecretKey 均已配置才可调用 OpenAPI */
+    val keyConfigured: Boolean get() = accessKey.isNotBlank() && secretKey.isNotBlank()
+
+    /** 🔴 防未来调试性日志泄密：toString 不得带出 SecretKey */
+    override fun toString(): String =
+        "GalaxyAccount(id=$id, name=$name, accessKey=$accessKey, secretKey=****)"
+}
+
+/**
+ * 粘贴清理：首尾空白 + 可选 `ak=` 前缀（契约 §四「均可选粘贴 ak=/sk= 前缀清理」）。
+ * 真实 AccessKey 不含等号，剥离不会误伤。
+ */
+fun normalizeGalaxyAccessKey(s: String): String = s.trim().removePrefixIgnoreCase("ak=")
+
+/** 粘贴清理：首尾空白 + 可选 `sk=` 前缀。 */
+fun normalizeGalaxySecretKey(s: String): String = s.trim().removePrefixIgnoreCase("sk=")
+
+private fun String.removePrefixIgnoreCase(prefix: String): String =
+    if (length >= prefix.length && regionMatches(0, prefix, 0, prefix.length, ignoreCase = true)) {
+        substring(prefix.length)
+    } else {
+        this
+    }
+
+/**
+ * 主账户余额。三项金额语义不同、平台各自扣费，不互相折算：
+ *   - money            现金余额（充值所得，元）
+ *   - powerMoney       算力券（活动/退租返还，只能抵扣实例费用）
+ *   - creditMoneyQuota 信用额度（余额≤0 时可透支的上限）
+ */
+@Serializable
+data class GalaxyBalance(
+    val name: String = "",
+    val phone: String = "", // 已脱敏（183****2433）
+    val money: Double = 0.0,
+    @SerialName("power_money") val powerMoney: Double = 0.0,
+    @SerialName("credit_money_quota") val creditMoneyQuota: Double = 0.0,
+    @SerialName("vip_level") val vipLevel: Int = 0,
+    @SerialName("custom_discount") val customDiscount: Double = 0.0,
+    @SerialName("last_login_at") val lastLoginAt: String = "", // RFC3339，空串表示无记录
+)
+
+/** 实例状态统计。刻意不含 statusDefault：实测统计端点与列表条数不一致（契约 §2.4）。 */
+@Serializable
+data class GalaxyStatusCount(
+    val all: Int = 0,
+    val running: Int = 0,
+    @SerialName("keepped_disk") val keeppedDisk: Int = 0,
+    @SerialName("create_error") val createError: Int = 0,
+    @SerialName("running_error") val runningError: Int = 0,
+)
+
+/**
+ * 云主机实例。字段是显式白名单——接口响应里含 Init_passwd / LastInitPasswd /
+ * RdpPasswd / VncPasswd 明文口令，任何一层都不允许透传（解析层直接丢弃）。
+ */
+@Serializable
+data class GalaxyInstance(
+    val name: String = "", // Container_name（平台侧唯一名）
+    val note: String = "",
+    val status: Int = 0,
+    @SerialName("status_text") val statusText: String = "",
+    val abnormal: Boolean = false,
+    @SerialName("gpu_type") val gpuType: String = "",
+    @SerialName("gpu_num") val gpuNum: Int = 0,
+    @SerialName("cpu_num") val cpuNum: Int = 0,
+    @SerialName("memory_gb") val memoryGb: Int = 0,
+    val district: String = "",
+    val host: String = "", // 平台内部机名（如 lyg2030）
+    @SerialName("ssh_host") val sshHost: String = "",
+    @SerialName("ssh_port") val sshPort: Int = 0,
+    val image: String = "",
+    val kind: String = "", // kvm / docker
+    @SerialName("due_at") val dueAt: String = "", // RFC3339（已按 ServerTime 折算）
+    @SerialName("disk_release_at") val diskReleaseAt: String = "",
+    @SerialName("total_cost") val totalCost: Double = 0.0, // 小时单价（元/时）
+    @SerialName("pay_type") val payType: String = "",   // money / power
+    @SerialName("auto_renew") val autoRenew: Boolean = false,
+    @SerialName("created_at") val createdAt: String = "",
+)
+
+/**
+ * 近期消耗（余额变更明细聚合）。净消耗 = −(ΔMoney+ΔPower)，净额为负的返还/充值不计入。
+ * 两个 *Partial 分别标记「今日」「近 7 天」窗口是否已翻完明细——明细按时间倒序，
+ * 只要取到早于窗口下界的一条，该窗口数值即为精确值。
+ */
+@Serializable
+data class GalaxyCost(
+    val today: Double = 0.0,
+    val last7d: Double = 0.0,
+    @SerialName("today_partial") val todayPartial: Boolean = false,
+    @SerialName("week_partial") val weekPartial: Boolean = false,
+    val entries: List<GalaxyCostEntry> = emptyList(),
+)
+
+/** 单条余额变更（只留展示需要的四项）。 */
+@Serializable
+data class GalaxyCostEntry(
+    val time: String = "", // RFC3339
+    val remark: String = "",
+    val spent: Double = 0.0, // 正数＝扣费，负数＝返还
+    val left: Double = 0.0,  // 变更后现金余额
+)
