@@ -69,9 +69,16 @@ Personal tool. Not affiliated with DeepSeek, OpenCode or Alibaba Cloud. Zen bill
 
 ## F-Droid
 
-F-Droid inclusion is in progress (see `docs/fdroid/com.xieguiawu.apicheckers.yml`).
+**Not submitted yet.** `docs/fdroid/com.xieguiawu.apicheckers.yml` is a
+ready-to-file fdroiddata metadata draft; opening the merge request needs a
+GitLab account. No MR exists in `gitlab.com/fdroid/fdroiddata` for this app.
+
 The app carries a `NonFreeNet` anti-feature: it is a client for the proprietary
 DeepSeek, opencode.ai and Alibaba Cloud services. No ads, no tracking, no telemetry.
+
+Before filing, run `bash scripts/validate-fdroid-metadata.sh` — it checks that
+every `commit:` in the draft is a real tag and that a changelog exists per
+versionCode.
 
 Store metadata lives under `fastlane/metadata/android/` (en-US + zh-CN).
 Release workflow: bump `versionCode`/`versionName` in `app/build.gradle.kts`,
