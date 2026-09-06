@@ -15,6 +15,28 @@
   补 `changelogs/3.txt`（en+zh）→ yml 追加第三个 Build 块
 - ⚠️ 本地 main 曾落后 origin 1 commit（Galaxy provider，+2883 行）——已 ff 拉回
 
+## 最后一次完成的工作（2026-09-06）
+- **provider=bai（白B.AI，对齐 Go v1.3.0 bai 能力集）**：`BaiAccount`（chat.b.ai sk- key，
+  同一把 key 推理面+控制台通用）→ SecureSettings `bai_accounts_json` 加密存取 →
+  设置页「白B.AI 账号」分区（添加/重命名/删除，API Key 密码遮罩）→ 首页 `BaiCard`
+  （积分余额 + ≈$ 换算 + 本月消耗 + 过期提醒）→ `BaiDetailScreen` 四卡
+  （积分/用量分析/免费通道四态/模型清单）→ `AppViewModel.refreshBaiNow`
+  （模型+积分两路并行，探活与 stats best-effort）
+  - 数据层：Models 增 BaiAccount/BaiPoints/BaiModel/BaiPlan/BaiProbe/BaiRecord/
+    BaiUsageStats + aggregateBaiUsage 纯函数（口径与 Go 逐条一致：requests 降序、
+    同数字典序、complete 由 repo 层决定）；Parsers 增 baiEnvelope（tRPC v11 信封，
+    UNAUTHORIZED 归一 BaiAuthError）、parseBaiModels（one-api 信封去重排序）、
+    parseBaiPoints（points_balance 缺失显式失败不显示 0）、parseBaiMonthlySpent、
+    parseBaiRecords（data 缺席显式失败/空数组合法）+ sanitizeServerText（与 Go
+    SanitizeText 同语义）；Repositories 增 BaiRepo（models/points/probeFreeFlash/stats，
+    串行 10 页×100 封顶、has_more 自然终止、截断 complete=false）
+  - 探活：refreshBaiNow 清单成功后探盯梢清单内存在模型（§12 自查：实现有调用点）；
+    免费通道卡四态 = ✓存活/✓未探/⚠运行时故障+摘要/✗缺失
+  - 测试：BaiRepoTest 12 个（MiniServer 单线程服务器双端口分流两域），
+    全套 122 个 0 失败；lintDebug 绿（顺手修了 themes.xml forceDarkAllowed 基线 error，
+    tools:targetApi="29"）；assembleDebug 出包 17.1MB
+  - ⚠️ 真机冒烟未做（本机无 adb 设备）——用户手机录入 sk- key 后验证 bai 卡与详情页
+
 ## F-Droid 发布准备（2026-08-24，历史记录，部分内容已被上面修正）
 - **状态**：Phase 1 完成——fastlane 元数据（en-US + zh-CN：short/full description、icon.png 从矢量精确渲染、2 张占位截图[真机截图待替换]、changelogs/1.txt）+ `scripts/verify-reproducible.sh`（双构建哈希对比）+ fdroiddata 草稿 `docs/fdroid/com.xieguiawu.apicheckers.yml`（含 NonFreeNet 声明，提交位置 metadata/com.xieguiawu.apicheckers.yml）
 - **合规结论**：MIT / 纯 FOSS 依赖 / 单 INTERNET 权限 / 无广告统计 → 硬性要求全满足；缺 git tag 已补（v1.0.0）
@@ -51,11 +73,12 @@ API Checkers — 极简深色 Android app，查看 DeepSeek API、OpenCode（Zen
 - [ ] **用户配置**：DeepSeek API key 本机已失效（需用户提供新 key）；opencode 三账号 key/workspace/cookie 需设置页添加；F-Droid Phase 2 待真机截图替换占位图 + GitLab fork fdroiddata 提 MR
 - [ ] 剩余 P2（不阻塞）：release minify（P2-5/16）、重试拦截器（P2-18）、workspaceId URL 编码（P2-8）等
 - [ ] Zen billing 解析依赖网页结构，若 opencode 改版需更新 Parsers.parseZenBilling；Qwen RPC 信封变化时改 `qwenFindObject` 目标键
-- [ ] 本机 lint 基线 error（themes.xml `android:forceDarkAllowed` NewApi）为历史遗留，发布前顺手修（`values-v29` 分拆或移除）
+- [ ] 本机 lint 基线 error（themes.xml `android:forceDarkAllowed` NewApi）为历史遗留，发布前顺手修（`values-v29` 分拆或移除）→ 已由 2026-09-06 CI 修复（values-v29 分拆）
 
 ## 技术要点（下一位 Agent 必读）
 - **数据源**：Go usage = `GET https://opencode.ai/zen/go/v1/usage`（API key）；Zen billing = `GET https://opencode.ai/workspace/{id}/billing`（cookie，解析 SolidJS SSR，锚点 `customerID:"cus_`，balance 单位为 1e-8 USD）；**Qwen 模型 = `https://token-plan.<region>.maas.aliyuncs.com/compatible-mode/v1/models`（API key，密钥与区域绑定）；Qwen 配额 = `POST https://bailian-cs.console.aliyun.com/data/api.json`（控制台 Cookie + sec_token，信封 `data.errorCode` 判错，负载 BFS 查找）**
 - **智星云 = `POST https://app.ai-galaxy.cn/openapi/v2`**：统一表单 POST，公共参数 apikey/timestamp/nonce + `sign = md5(字典序 k=v 串 &secret=SK)`（小写 hex，空值/ sign/secret 不参与）；**HTTP 恒 200、错误在信封 {success,code:"4000",message}**；page_size ≤100 自行夹住；四个端点：account/get_main_account_info、instance/get_instance_status_count、instance/get_instance_list、billing/get_balance_change_list
+- **白B.AI = 两域两网关**：模型/探活 `api.b.ai/v1/models|/v1/chat/completions`（one-api 系，Bearer sk-；探活 max_tokens=8）；积分/明细 `chat.b.ai/trpc/lambda/usage.points|usage.summary|usage.records`（tRPC v11 信封，input 走 URL query，records 翻页 has_more/page/pageSize）。1 积分 = 1e-6 USD；过期告警阈值 100 万积分（口径 2026-09-06 用户定）。契约 Go 仓 docs/plans/2026-09-04-bai-provider.md
 - **DeepSeek**：余额 = `api.deepseek.com/user/balance`（API key）；消费 = `platform.deepseek.com/api/v0/usage/cost?month=&year=`（浏览器 token，code 40003 = 失效，拉本月+上月聚合 30 天）
 - **Qwen 三个坑**（详见 Go 仓库 docs/plans/2026-08-29-qwen-provider.md）：①cornerstoneParam 绝不硬编码 switchAgent（→ NotAuthorised）②抓 SEC_TOKEN 必须带 Sec-Fetch-* 导航头 + 桌面 UA（ApiClient.BROWSER_UA）③登录失效仍 HTTP 200，错误在信封里
 - **智星云四个坑**（详见 Go 仓库 docs/plans/2026-08-29-ai-galaxy-provider.md）：①实例列表响应含 Init_passwd/LastInitPasswd/RdpPasswd/VncPasswd 明文口令——白名单 DTO 解码（ignoreUnknownKeys），任何数据类/序列化/日志不得透传 ②不调 account/get_apikey_info（回吐 SecretKey）③统计端点 statusDefault 与列表条数实测不一致，统计行只展示 statusAll/statusRunning/statusKeeppedDisk/statusCreateError/statusRunningError ④到期倒计时恒显：ServerTime 折算 dueAt（remaining = Due_time − ServerTime），异常徽章与倒计时并存
@@ -67,4 +90,4 @@ API Checkers — 极简深色 Android app，查看 DeepSeek API、OpenCode（Zen
 - graphify-out/: 存在（**2026-08-29 晚间 galaxy provider 后重建**；图谱不入库（.gitignore））
 
 ## 最后更新时间
-2026-08-29 19:10
+2026-09-06 14:4x

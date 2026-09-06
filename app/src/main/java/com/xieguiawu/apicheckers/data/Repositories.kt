@@ -12,11 +12,13 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 
 /** DeepSeek 数据仓库：余额（官方 API）+ 消费明细（platform 页面 API） */
@@ -690,4 +692,169 @@ private fun galaxyError(code: String, message: String): String {
 private fun galaxyCostWindowCovered(changes: List<GalaxyChange>, today: LocalDate): Boolean {
     val day7 = today.minusDays(6)
     return changes.any { it.at.toLocalDate().isBefore(day7) }
+}
+
+/**
+ * 白B.AI 数据仓库：模型清单 + 免费通道探活走推理面（api.b.ai），
+ * 积分额度/用量明细走控制台 tRPC（chat.b.ai）。同一把 sk- key 两处通用（Bearer）。
+ * 契约：Go 仓 docs/plans/2026-09-04-bai-provider.md §二-b/§八。
+ */
+class BaiRepo(
+    private val client: OkHttpClient = ApiClient.client,
+    private val baseURL: String = BaiBaseURL,
+    private val consoleURL: String = BaiConsoleURL,
+    /** 用量明细最大翻页数（≤0 → 默认 10 页 = 1000 条封顶，与 Go 同口径） */
+    private val statsPages: Int = 0,
+) {
+    companion object {
+        const val BaiBaseURL = "https://api.b.ai"
+        const val BaiConsoleURL = "https://chat.b.ai"
+        const val BaiStatsPageSize = 100
+    }
+
+    private fun base(): String = if (baseURL.isNotBlank()) baseURL.trimEnd('/') else BaiBaseURL
+
+    private fun console(): String = if (consoleURL.isNotBlank()) consoleURL.trimEnd('/') else BaiConsoleURL
+
+    /** 推理面 GET（401/403 → 统一认证文案；其他非 2xx 带消毒后的响应体摘要） */
+    private suspend fun inferGet(apiKey: String, path: String): Result<String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (apiKey.isBlank()) error("未配置 API Key")
+                val req = Request.Builder().url(base() + path)
+                    .header("Authorization", "Bearer $apiKey")
+                    .header("Accept", "application/json")
+                    .build()
+                val resp = client.newCall(req).execute()
+                val body = resp.body?.string().orEmpty()
+                when {
+                    resp.code == 401 || resp.code == 403 -> error(BaiAuthError)
+                    !resp.isSuccessful -> error("HTTP ${resp.code}: ${sanitizeServerText(body.take(120))}")
+                    else -> body
+                }
+            }
+        }
+
+    /** 控制台 tRPC GET（只读 query；input 参数走 URL query） */
+    private suspend fun consoleGet(apiKey: String, proc: String, input: String? = null): Result<String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (apiKey.isBlank()) error("未配置 API Key")
+                val url = buildString {
+                    append(console()).append("/trpc/lambda/").append(proc)
+                    if (input != null) append("?input=").append(java.net.URLEncoder.encode(input, "UTF-8"))
+                }
+                val req = Request.Builder().url(url)
+                    .header("Authorization", "Bearer $apiKey")
+                    .header("Accept", "application/json")
+                    .build()
+                val resp = client.newCall(req).execute()
+                val body = resp.body?.string().orEmpty()
+                when {
+                    resp.code == 401 || resp.code == 403 -> error(BaiAuthError)
+                    !resp.isSuccessful -> error("HTTP ${resp.code}: ${sanitizeServerText(body.take(120))}")
+                    else -> body
+                }
+            }
+        }
+
+    /** 拉模型清单（去重排序 + 盯梢缺失检查在 BaiPlan）。 */
+    suspend fun models(apiKey: String): Result<BaiPlan> =
+        inferGet(apiKey, "/v1/models").mapCatching { BaiPlan(models = parseBaiModels(it).getOrThrow()) }
+
+    /** 拉积分额度：usage.points 为主，usage.summary（本月消耗）为辅（失败不致命）。 */
+    suspend fun points(apiKey: String): Result<BaiPoints> =
+        consoleGet(apiKey, "usage.points").mapCatching { parseBaiPoints(it).getOrThrow() }
+            .map { pts ->
+                consoleGet(apiKey, "usage.summary").getOrNull()?.let { sum ->
+                    parseBaiMonthlySpent(sum).getOrNull()?.let { spent ->
+                        pts.copy(monthlySpent = spent, hasMonthly = true)
+                    }
+                } ?: pts
+            }
+
+    /**
+     * 免费通道运行时探活（POST /v1/chat/completions，max_tokens=8）。
+     * 清单「在」≠ 运行时可用——间歇 503 只有真发一次推理才查得出。
+     * 单模型失败不抖掉其余（alive=false + 消毒摘要）；全部网络层异常返回失败。
+     */
+    suspend fun probeFreeFlash(apiKey: String, modelIDs: List<String>): Result<List<BaiProbe>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (apiKey.isBlank()) error("未配置 API Key")
+                val out = mutableListOf<BaiProbe>()
+                for (id in modelIDs) {
+                    val probe = try {
+                        val payload = """{"model":"$id","messages":[{"role":"user","content":"ping"}],"max_tokens":8,"stream":false}"""
+                        val req = Request.Builder().url(base() + "/v1/chat/completions")
+                            .header("Authorization", "Bearer $apiKey")
+                            .header("Content-Type", "application/json")
+                            .header("Accept", "application/json")
+                            .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), payload))
+                            .build()
+                        val resp = client.newCall(req).execute()
+                        val body = resp.body?.string().orEmpty()
+                        when {
+                            resp.code in 200..299 -> BaiProbe(model = id, alive = true)
+                            resp.code == 401 || resp.code == 403 -> BaiProbe(model = id, alive = false, detail = BaiAuthError)
+                            else -> BaiProbe(model = id, alive = false, detail = "HTTP ${resp.code}: ${sanitizeServerText(body.take(120))}")
+                        }
+                    } catch (e: Exception) {
+                        BaiProbe(model = id, alive = false, detail = "网络异常: ${e.message}")
+                    }
+                    out.add(probe)
+                }
+                out
+            }
+        }
+
+    /**
+     * 用量分析：串行翻页 usage.records 并聚合（requests 降序、同数字典序）。
+     * has_more=false 自然终止 → complete=true；达页数上限 → complete=false（截断诚实）。
+     * 中途页失败：保留已拉到的页（complete=false + 错误标注中断页）。
+     */
+    suspend fun stats(apiKey: String): Result<BaiUsageStats> {
+        val maxPages = if (statsPages > 0) statsPages else 10
+        val all = mutableListOf<BaiRecord>()
+        for (page in 1..maxPages) {
+            val body = consoleGet(
+                apiKey, "usage.records",
+                input = """{"page":$page,"pageSize":$BaiStatsPageSize}""",
+            ).getOrElse { e ->
+                // 中途页失败：已拉到的页不再返回（Android 侧无 error+数据并存通道，
+                // 返回 failure 保留 Go 侧「标注中断页」语义的简化版）
+                return Result.failure(e)
+            }
+            val (records, hasMore) = parseBaiRecords(body).getOrElse { return Result.failure(it) }
+            all.addAll(records)
+            if (!hasMore) {
+                return Result.success(aggregateBaiUsage(all).copy(complete = true))
+            }
+        }
+        return Result.success(aggregateBaiUsage(all).copy(complete = false))
+    }
+}
+
+/** 解析 usage.records 负载：data 缺席 = 显式失败；空数组 = 合法零记录。返回 (记录, has_more)。 */
+fun parseBaiRecords(raw: String): Result<Pair<List<BaiRecord>, Boolean>> = runCatching {
+    val p = baiEnvelope(raw, "用量明细").getOrThrow()
+    val arr = p["data"]?.jsonArray ?: error("未获取到 BAI 用量明细（响应缺少 data）")
+    val recs = mutableListOf<BaiRecord>()
+    for (e in arr) {
+        val o = e.jsonObject
+        recs.add(
+            BaiRecord(
+                model = (o["model"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                createdAt = (o["created_at"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                inputTokens = (o["input_tokens"] as? JsonPrimitive).baiLong() ?: 0L,
+                outputTokens = (o["output_tokens"] as? JsonPrimitive).baiLong() ?: 0L,
+                totalTokens = (o["total_tokens"] as? JsonPrimitive).baiLong() ?: 0L,
+                costPoints = (o["cost_points"] as? JsonPrimitive).baiLong() ?: 0L,
+            ),
+        )
+    }
+    val hasMore = (p["has_more"] as? JsonPrimitive)?.let {
+        if (it.isString) it.contentOrNull == "true" else it.booleanOrNull == true
+    } == true
+    recs to hasMore
 }

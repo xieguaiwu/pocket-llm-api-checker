@@ -112,6 +112,16 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
     var galaxySecretKey by remember { mutableStateOf("") }
     var showGalaxySecretKey by remember { mutableStateOf(false) }
     var galaxyFormError by remember { mutableStateOf<String?>(null) }
+
+    // 白B.AI 账号
+    var baiAccounts by remember { mutableStateOf(SecureSettings.getBaiAccounts()) }
+    var baiRenaming by remember { mutableStateOf<com.xieguiawu.apicheckers.data.BaiAccount?>(null) }
+    var baiRenameText by remember { mutableStateOf("") }
+    var baiEditing by remember { mutableStateOf(false) }
+    var baiName by remember { mutableStateOf("") }
+    var baiApiKey by remember { mutableStateOf("") }
+    var showBaiApiKey by remember { mutableStateOf(false) }
+    var baiFormError by remember { mutableStateOf<String?>(null) }
     // 操作反馈
     var hint by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -740,6 +750,120 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                     }
                 }
             }
+            // ── 白B.AI 账号分区 ──
+            item(key = "bai") {
+                SectionCard("白B.AI 账号") {
+                    if (baiAccounts.isEmpty()) {
+                        Text("暂无白B.AI 账号", color = TextSub, fontSize = 13.sp)
+                    }
+                    baiAccounts.forEach { acc ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(acc.name, color = TextMain, fontSize = 14.sp)
+                                Text(keyTail(acc.apiKey), color = TextSub, fontSize = 12.sp)
+                            }
+                            IconButton(onClick = {
+                                baiRenaming = acc
+                                baiRenameText = acc.name
+                            }) {
+                                Icon(Icons.Filled.Edit, contentDescription = "重命名白B.AI 账号", tint = TextSub)
+                            }
+                            IconButton(onClick = {
+                                SecureSettings.deleteBaiAccount(acc.id)
+                                baiAccounts = SecureSettings.getBaiAccounts()
+                                vm.refreshAll()
+                                flashHint("已删除白B.AI 账号「${acc.name}」")
+                            }) {
+                                Icon(Icons.Filled.Delete, contentDescription = "删除白B.AI 账号", tint = Danger)
+                            }
+                        }
+                    }
+
+                    if (baiEditing) {
+                        HorizontalDivider(color = Divider, modifier = Modifier.padding(vertical = 4.dp))
+                        OutlinedTextField(
+                            value = baiName,
+                            onValueChange = { baiName = it },
+                            label = { Text("名称") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = baiApiKey,
+                            onValueChange = { baiApiKey = it },
+                            label = { Text("API Key（sk- 前缀，必填）") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            visualTransformation = if (showBaiApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showBaiApiKey = !showBaiApiKey }) {
+                                    Icon(
+                                        if (showBaiApiKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                        contentDescription = if (showBaiApiKey) "隐藏" else "显示",
+                                        tint = TextSub,
+                                    )
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "获取：chat.b.ai 侧栏 API → Create API Key（sk- 前缀）。" +
+                                "同一把 key 推理面（api.b.ai）与控制台（chat.b.ai）通用，无需 Cookie。",
+                            color = TextSub,
+                            fontSize = 12.sp,
+                        )
+                        baiFormError?.let { Text(it, color = Danger, fontSize = 13.sp) }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Button(onClick = {
+                                val key = baiApiKey.trim()
+                                if (key.isBlank()) {
+                                    baiFormError = "API Key 为必填"
+                                } else {
+                                    val name = baiName.trim().ifEmpty { "白B.AI ${baiAccounts.size + 1}" }
+                                    SecureSettings.saveBaiAccount(
+                                        com.xieguiawu.apicheckers.data.BaiAccount(
+                                            id = java.util.UUID.randomUUID().toString(),
+                                            name = name,
+                                            apiKey = key,
+                                        ),
+                                    )
+                                    baiAccounts = SecureSettings.getBaiAccounts()
+                                    baiEditing = false
+                                    baiName = ""
+                                    baiApiKey = ""
+                                    baiFormError = null
+                                    vm.refreshAll()
+                                    flashHint("白B.AI 账号「$name」已保存，正在刷新数据")
+                                }
+                            }) {
+                                Text("保存账号")
+                            }
+                            TextButton(onClick = {
+                                baiEditing = false
+                                baiName = ""
+                                baiApiKey = ""
+                                baiFormError = null
+                            }) {
+                                Text("取消", color = TextSub)
+                            }
+                        }
+                    } else {
+                        TextButton(onClick = {
+                            baiEditing = true
+                            baiName = "白B.AI ${baiAccounts.size + 1}"
+                        }) {
+                            Icon(Icons.Filled.Add, contentDescription = null, tint = Accent)
+                            Spacer(Modifier.width(4.dp))
+                            Text("添加白B.AI 账号", color = Accent, fontSize = 14.sp)
+                        }
+                    }
+                }
+            }
         }
 
         // 账号重命名对话框
@@ -882,6 +1006,39 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                 },
                 dismissButton = {
                     TextButton(onClick = { galaxyRenaming = null }) { Text("取消", color = TextSub) }
+                },
+            )
+        }
+
+        baiRenaming?.let { acc ->
+            AlertDialog(
+                onDismissRequest = { baiRenaming = null },
+                containerColor = Card,
+                titleContentColor = TextMain,
+                textContentColor = TextMain,
+                title = { Text("重命名白B.AI 账号") },
+                text = {
+                    OutlinedTextField(
+                        value = baiRenameText,
+                        onValueChange = { baiRenameText = it },
+                        singleLine = true,
+                        colors = fieldColors,
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val newName = baiRenameText.trim()
+                        if (newName.isNotBlank()) {
+                            SecureSettings.saveBaiAccount(acc.copy(name = newName))
+                            baiAccounts = SecureSettings.getBaiAccounts()
+                            vm.refreshAll()
+                            flashHint("已重命名为「${newName}」")
+                        }
+                        baiRenaming = null
+                    }) { Text("保存") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { baiRenaming = null }) { Text("取消", color = TextSub) }
                 },
             )
         }

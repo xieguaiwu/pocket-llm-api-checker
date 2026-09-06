@@ -7,6 +7,12 @@ import com.xieguiawu.apicheckers.data.DeepSeekAccount
 import com.xieguiawu.apicheckers.data.DeepSeekBalance
 import com.xieguiawu.apicheckers.data.DeepSeekCost
 import com.xieguiawu.apicheckers.data.DeepSeekRepo
+import com.xieguiawu.apicheckers.data.BaiAccount
+import com.xieguiawu.apicheckers.data.BaiFreeFlashModels
+import com.xieguiawu.apicheckers.data.BaiPoints
+import com.xieguiawu.apicheckers.data.BaiPlan
+import com.xieguiawu.apicheckers.data.BaiRepo
+import com.xieguiawu.apicheckers.data.BaiUsageStats
 import com.xieguiawu.apicheckers.data.GalaxyAccount
 import com.xieguiawu.apicheckers.data.GalaxyBalance
 import com.xieguiawu.apicheckers.data.GalaxyCost
@@ -81,12 +87,25 @@ data class GalaxyUi(
             .sumOf { it.totalCost }
 }
 
+/** 单个白B.AI 账号的 UI 状态（同 Go BaiResult：两路独立可缺一路，stats 可选）。 */
+data class BaiUi(
+    val account: BaiAccount? = null,
+    val plan: BaiPlan? = null,
+    val points: BaiPoints? = null,
+    val stats: BaiUsageStats? = null,
+    val error: String? = null,
+    val loading: Boolean = false,
+) {
+    val keyConfigured: Boolean get() = account?.keyConfigured == true
+}
+
 /** 全局 UI 状态 */
 data class UiState(
     val deepSeekList: List<DeepSeekUi> = emptyList(),
     val accounts: List<AccountUi> = emptyList(),
     val qwenList: List<QwenUi> = emptyList(),
     val galaxyList: List<GalaxyUi> = emptyList(),
+    val baiList: List<BaiUi> = emptyList(),
     val refreshing: Boolean = false,
     val lastUpdated: Long = 0L,
 )
@@ -98,6 +117,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val openCodeRepo = OpenCodeRepo()
     private val qwenRepo = QwenRepo()
     private val galaxyRepo = GalaxyRepo()
+    private val baiRepo = BaiRepo()
     private val _ui = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _ui.asStateFlow()
 
@@ -114,12 +134,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val accounts = SecureSettings.getAccounts().map { AccountUi(it) }
         val qwenAccounts = SecureSettings.getQwenAccounts().map { QwenUi(account = it) }
         val galaxyAccounts = SecureSettings.getGalaxyAccounts().map { GalaxyUi(account = it) }
+        val baiAccounts = SecureSettings.getBaiAccounts().map { BaiUi(account = it) }
         _ui.update {
             it.copy(
                 deepSeekList = dsAccounts,
                 accounts = accounts,
                 qwenList = qwenAccounts,
                 galaxyList = galaxyAccounts,
+                baiList = baiAccounts,
             )
         }
     }
@@ -135,6 +157,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val fresh = SecureSettings.getAccounts()
             val freshQwen = SecureSettings.getQwenAccounts()
             val freshGalaxy = SecureSettings.getGalaxyAccounts()
+            val freshBai = SecureSettings.getBaiAccounts()
             _ui.update { st ->
                 val dsMerged = freshDs.map { acc ->
                     st.deepSeekList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: DeepSeekUi(account = acc)
@@ -148,7 +171,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val galaxyMerged = freshGalaxy.map { acc ->
                     st.galaxyList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: GalaxyUi(account = acc)
                 }
-                st.copy(deepSeekList = dsMerged, accounts = merged, qwenList = qwenMerged, galaxyList = galaxyMerged)
+                val baiMerged = freshBai.map { acc ->
+                    st.baiList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: BaiUi(account = acc)
+                }
+                st.copy(deepSeekList = dsMerged, accounts = merged, qwenList = qwenMerged, galaxyList = galaxyMerged, baiList = baiMerged)
             }
             // 并行刷新所有 DeepSeek / OpenCode / Qwen / 智星云账号
             kotlinx.coroutines.coroutineScope {
@@ -156,6 +182,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 fresh.forEach { launch { refreshAccountNow(it.id) } }
                 freshQwen.forEach { launch { refreshQwenNow(it.id) } }
                 freshGalaxy.forEach { launch { refreshGalaxyNow(it.id) } }
+                freshBai.forEach { launch { refreshBaiNow(it.id) } }
             }
             val now = System.currentTimeMillis()
             _ui.update { it.copy(refreshing = false, lastUpdated = now) }
@@ -295,6 +322,52 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     status = r.status.getOrNull(),
                     instances = r.instances.getOrNull() ?: emptyList(),
                     cost = r.cost.getOrNull(),
+                    error = error,
+                    loading = false,
+                ) else it
+            })
+        }
+    }
+
+    /** 刷新单个白B.AI 账号：模型清单+探活（推理面）与积分额度（控制台）并行，同 Go refreshBai。 */
+    fun refreshBai(id: String) {
+        viewModelScope.launch { refreshBaiNow(id) }
+    }
+
+    private suspend fun refreshBaiNow(id: String) {
+        val acc = SecureSettings.getBaiAccounts().firstOrNull { it.id == id } ?: return
+        _ui.update { st ->
+            st.copy(baiList = st.baiList.map {
+                if (it.account?.id == id) it.copy(loading = true, error = null) else it
+            })
+        }
+        val r = kotlinx.coroutines.coroutineScope {
+            val plan = async { baiRepo.models(acc.apiKey) }
+            val points = async { baiRepo.points(acc.apiKey) }
+            plan.await() to points.await()
+        }
+        var (planR, pointsR) = r
+        // 免费通道运行时探活：清单拉成功后探盯梢清单内存在的模型（缺失项不浪费请求）。
+        // 探活失败不抖掉清单（Go refreshBai 同口径）。§12 自查：实现必须有调用点。
+        var statsR: Result<BaiUsageStats>? = null
+        planR.getOrNull()?.let { plan ->
+            val present = BaiFreeFlashModels.filterNot { it in plan.missingFreeFlash() }
+            val probes = baiRepo.probeFreeFlash(acc.apiKey, present).getOrNull()
+            if (probes != null) planR = Result.success(plan.copy(probes = probes))
+            // 用量分析 best-effort：失败只影响 stats 段（UI 不显示该卡），不进 error
+            statsR = baiRepo.stats(acc.apiKey)
+        }
+        val error = listOfNotNull(
+            planR.exceptionOrNull()?.message,
+            pointsR.exceptionOrNull()?.message,
+        ).distinct().joinToString("\n").ifEmpty { null }
+        _ui.update { st ->
+            st.copy(baiList = st.baiList.map {
+                if (it.account?.id == id) BaiUi(
+                    account = acc,
+                    plan = planR.getOrNull(),
+                    points = pointsR.getOrNull(),
+                    stats = statsR?.getOrNull(),
                     error = error,
                     loading = false,
                 ) else it

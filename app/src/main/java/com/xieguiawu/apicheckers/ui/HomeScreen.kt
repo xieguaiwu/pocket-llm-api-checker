@@ -47,8 +47,11 @@ import androidx.compose.ui.unit.sp
 import com.xieguiawu.apicheckers.AccountUi
 import com.xieguiawu.apicheckers.AppViewModel
 import com.xieguiawu.apicheckers.DeepSeekUi
+import com.xieguiawu.apicheckers.BaiUi
 import com.xieguiawu.apicheckers.GalaxyUi
 import com.xieguiawu.apicheckers.QwenUi
+import com.xieguiawu.apicheckers.data.BaiExpiringWarnPoints
+import com.xieguiawu.apicheckers.data.baiDollar
 import com.xieguiawu.apicheckers.data.GalaxyInstance
 import com.xieguiawu.apicheckers.data.Parsers
 import com.xieguiawu.apicheckers.data.galaxyStatusActive
@@ -198,6 +201,7 @@ fun HomeScreen(
     onOpenAccount: (String) -> Unit,
     onOpenQwen: (String) -> Unit,
     onOpenGalaxy: (String) -> Unit,
+    onOpenBai: (String) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val ui by vm.uiState.collectAsState()
@@ -312,6 +316,9 @@ fun HomeScreen(
             }
             items(ui.galaxyList, key = { it.account?.id ?: "galaxy-none" }) { g ->
                 GalaxyCard(g, onClick = { g.account?.let { onOpenGalaxy(it.id) } })
+            }
+            items(ui.baiList, key = { it.account?.id ?: "bai-none" }) { b ->
+                BaiCard(b, onClick = { b.account?.let { onOpenBai(it.id) } })
             }
             item(key = "add") {
                 TextButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
@@ -603,6 +610,89 @@ private fun GalaxyCard(g: GalaxyUi, onClick: () -> Unit) {
                         }
                     }
                     g.error?.let { Text(it, color = Danger, fontSize = 13.sp) }
+                }
+            }
+        }
+    }
+}
+
+/** 白B.AI 首页卡：积分余额（≈$ 换算）+ 本月消耗 + 过期提醒（口径：只警过期 ≥100 万）。 */
+@Composable
+private fun BaiCard(b: BaiUi, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val dot = when {
+                    b.points != null || b.plan != null -> Accent
+                    b.error != null -> Danger
+                    else -> TextSub
+                }
+                Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    b.account?.name ?: "白B.AI",
+                    color = TextMain,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            when {
+                !b.keyConfigured -> {
+                    Text("未配置 API Key，点击右上角设置添加", color = TextSub, fontSize = 14.sp)
+                    b.error?.let { Text(it, color = Danger, fontSize = 13.sp) }
+                }
+                else -> {
+                    val pts = b.points
+                    if (pts != null) {
+                        val balColor = if (pts.balance <= 0) Danger else TextMain
+                        Text(
+                            "积分 ${java.text.DecimalFormat("#,##0").format(pts.balance)}",
+                            color = balColor,
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text("≈ $${"%.2f".format(java.util.Locale.US, baiDollar(pts.balance))}", color = TextSub, fontSize = 13.sp)
+                        if (pts.hasMonthly) {
+                            Text("本月消耗 ${java.text.DecimalFormat("#,##0").format(pts.monthlySpent)}", color = TextSub, fontSize = 13.sp)
+                        }
+                        // 过期提醒：口径 2026-09-06 用户定（只警过期部分，余额维持 ≤0 红）
+                        if (pts.expiring >= BaiExpiringWarnPoints && pts.balance > 0) {
+                            Text(
+                                "其中 ${java.text.DecimalFormat("#,##0").format(pts.expiring)} 即将过期，不花就没了",
+                                color = Warn,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    } else if (b.error == null) {
+                        Text("加载中…", color = TextSub, fontSize = 14.sp)
+                    }
+                    b.plan?.let { plan ->
+                        val missing = plan.missingFreeFlash()
+                        if (missing.isNotEmpty()) {
+                            Text(
+                                "免费通道缺失：${missing.joinToString("、")}",
+                                color = Danger,
+                                fontSize = 13.sp,
+                            )
+                        }
+                        val dead = plan.probes.filterNot { it.alive }
+                        if (dead.isNotEmpty()) {
+                            Text(
+                                "运行时故障：${dead.joinToString("、") { it.model }}",
+                                color = Danger,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    }
+                    b.error?.let { Text(it, color = Danger, fontSize = 13.sp) }
                 }
             }
         }

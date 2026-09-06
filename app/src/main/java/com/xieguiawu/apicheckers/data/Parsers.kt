@@ -21,6 +21,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 
 /** 三个外部数据源的解析器（纯 JVM，可单测） */
 object Parsers {
@@ -679,3 +680,138 @@ fun aggregateGalaxyCost(changes: List<GalaxyChange>, hasMore: Boolean, now: Zone
 
 /** galaxy 解析共用 Json：ignoreUnknownKeys（口令等未知字段直接丢弃）。 */
 private val galaxyJson = Json { ignoreUnknownKeys = true }
+
+// ── 白B.AI（chat.b.ai tRPC + api.b.ai 推理面） ────────────────
+//
+// tRPC v11 单查询信封：成功 {"result":{"data":{"json":…}}}，
+// 失败 {"error":{"json":{"message":…,"data":{"code":"UNAUTHORIZED",…}}}}。
+// 错误信封优先于状态码；UNAUTHORIZED 归一到认证提示（与推理面 401/403 共用一句）。
+
+/** BAI 凭据问题统一口径（与 Go parsers.ErrBaiAuth 逐字一致） */
+const val BaiAuthError = "BAI API Key 无效、已过期或额度用尽，请到 chat.b.ai 核对"
+
+private val baiJson = Json { ignoreUnknownKeys = true }
+
+/** 宽容取整数（int64 / 浮点整数值 / 数字字符串三形状；越界/非整数 → null） */
+internal fun JsonPrimitive?.baiLong(): Long? {
+    if (this == null) return null
+    longOrNull?.let { return it }
+    contentOrNull?.trim()?.let { s ->
+        s.toLongOrNull()?.let { return it }
+        // 浮点形状（JS 序列化 2.7e6）→ 必须是整数值
+        val d = s.toDoubleOrNull() ?: return null
+        if (d % 1.0 == 0.0 && kotlin.math.abs(d) < 9.223372036854776E18) return d.toLong()
+        return null
+    }
+    val d = doubleOrNull ?: return null
+    if (d % 1.0 == 0.0 && kotlin.math.abs(d) < 9.223372036854776E18) return d.toLong()
+    return null
+}
+
+/** 拆 tRPC 信封：成功返回负载 json 节点；失败带中文错误（认证归一）。 */
+internal fun baiEnvelope(raw: String, proc: String): Result<JsonObject> = runCatching {
+    val env = try {
+        baiJson.parseToJsonElement(raw).jsonObject
+    } catch (e: Exception) {
+        error("BAI $proc JSON 解析失败: ${e.message}")
+    }
+    val err = env["error"]?.jsonObject
+    if (err != null) {
+        val inner = err["json"]?.jsonObject
+        val code = inner?.get("data")?.jsonObject?.get("code")?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        val msg = inner?.get("message")?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        if (msg.isNotEmpty()) {
+            if (code.equals("UNAUTHORIZED", ignoreCase = true)) error(BaiAuthError)
+            error("BAI $proc 返回错误: ${msg.take(200)}")
+        }
+        error("BAI $proc 返回错误")
+    }
+    val payload = env["result"]?.jsonObject?.get("data")?.jsonObject?.get("json")?.jsonObject
+        ?: error("未获取到 BAI $proc")
+    payload
+}
+
+/** 模型清单（one-api 系信封：data 数组 + 顶层 success）。id 去重 + 按 id 排序。 */
+fun parseBaiModels(raw: String): Result<List<BaiModel>> = runCatching {
+    val env = try {
+        baiJson.parseToJsonElement(raw).jsonObject
+    } catch (e: Exception) {
+        error("BAI 模型清单 JSON 解析失败: ${e.message}")
+    }
+    // one-api 网关错误信封（顶层 success=false + message / error.message）
+    val successEl = env["success"] as? JsonPrimitive
+    if (successEl != null && !successEl.isString && successEl.booleanOrNull == false) {
+        val msg = (env["error"]?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull
+            ?: env["message"]?.jsonPrimitive?.contentOrNull)?.trim().orEmpty()
+        error("BAI 网关返回错误: ${msg.take(200)}")
+    }
+    val arr = env["data"]?.jsonArray ?: error("未获取到 BAI 模型")
+    val seen = mutableSetOf<String>()
+    val out = mutableListOf<BaiModel>()
+    for (e in arr) {
+        val o = e.jsonObject
+        val id = (o["id"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        if (id.isEmpty() || !seen.add(id)) continue
+        val owned = (o["owned_by"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        val eps = (o["supported_endpoint_types"] as? JsonArray)?.mapNotNull {
+            (it as? JsonPrimitive)?.contentOrNull
+        }.orEmpty()
+        out.add(BaiModel(id = id, ownedBy = owned, endpoints = eps))
+    }
+    if (out.isEmpty()) error("未获取到 BAI 模型")
+    out.sortedBy { it.id }
+}
+
+/** 积分余额 + 即将过期（usage.points）。points_balance 缺失 = 显式失败（不显示 0 误導「额度用尽」）。 */
+fun parseBaiPoints(raw: String): Result<BaiPoints> = runCatching {
+    val p = baiEnvelope(raw, "积分额度").getOrThrow()
+    val balance = (p["points_balance"] as? JsonPrimitive).baiLong()
+        ?: error("未获取到 BAI 积分额度（响应缺少 points_balance）")
+    val expiring = (p["points_expiring"] as? JsonPrimitive).baiLong() ?: 0L
+    BaiPoints(balance = balance, expiring = expiring)
+}
+
+/** 本月已消耗积分（usage.summary 的 monthly_spent）。 */
+fun parseBaiMonthlySpent(raw: String): Result<Long> = runCatching {
+    val p = baiEnvelope(raw, "本月消耗").getOrThrow()
+    (p["monthly_spent"] as? JsonPrimitive).baiLong()
+        ?: error("未获取到 BAI 本月消耗（响应缺少 monthly_spent）")
+}
+
+/** ANSI/控制字符消毒（与 Go parsers.SanitizeText 同语义：剥 CSI/OSC 转义与控制字符，保留 \n\t） */
+fun sanitizeServerText(s: String): String {
+    val dirty = s.any { r -> r == '\u001B' || (r < ' ' && r != '\n' && r != '\t') || r == '\u007F' }
+    if (!dirty) return s
+    val sb = StringBuilder(s.length)
+    var i = 0
+    while (i < s.length) {
+        val c = s[i]
+        if (c == '\u001B') {
+            if (i + 1 >= s.length) break
+            when (s[i + 1]) {
+                '[' -> { // CSI：终止字节 @-~
+                    var j = i + 2
+                    while (j < s.length && j - i < 64 && (s[j] < '@' || s[j] > '~')) j++
+                    i = if (j < s.length && s[j] in '@'..'~') j + 1 else j
+                }
+                ']' -> { // OSC：BEL 或 ESC\
+                    var j = i + 2
+                    var end = -1
+                    while (j < s.length && j - i < 256) {
+                        if (s[j] == '\u0007') { end = j + 1; break }
+                        if (s[j] == '\u001B' && j + 1 < s.length && s[j + 1] == '\\') { end = j + 2; break }
+                        j++
+                    }
+                    i = if (end > 0) end else minOf(j, s.length)
+                }
+                else -> i += 2
+            }
+        } else if (c < ' ' && c != '\n' && c != '\t' || c == '\u007F') {
+            i++
+        } else {
+            sb.append(c)
+            i++
+        }
+    }
+    return sb.toString()
+}

@@ -221,6 +221,25 @@ object SecureSettings {
         prefs.edit().putString("galaxy_accounts_json", enc(json.encodeToString(list))).apply()
     }
 
+    // 白B.AI 账号（整体 JSON 加密存储，与 galaxy_accounts 同写法）
+    fun getBaiAccounts(): List<BaiAccount> {
+        val raw = prefs.getString("bai_accounts_json", "[]") ?: "[]"
+        return runCatching { json.decodeFromString<List<BaiAccount>>(dec(raw)) }.getOrDefault(emptyList())
+    }
+
+    fun saveBaiAccount(a: BaiAccount) {
+        val list = getBaiAccounts().toMutableList()
+        val idx = list.indexOfFirst { it.id == a.id }
+        if (idx >= 0) list[idx] = a else list.add(a)
+        prefs.edit().putString("bai_accounts_json", enc(json.encodeToString(list))).apply()
+        if (runCatching { dec(enc(json.encodeToString(list))) }.isSuccess) securityWarning = null
+    }
+
+    fun deleteBaiAccount(id: String) {
+        val list = getBaiAccounts().filterNot { it.id == id }
+        prefs.edit().putString("bai_accounts_json", enc(json.encodeToString(list))).apply()
+    }
+
     // 最近更新时间
     fun lastUpdate(key: String): Long = prefs.getLong("last_update_$key", 0L)
     fun setLastUpdate(key: String, t: Long) { prefs.edit().putLong("last_update_$key", t).apply() }

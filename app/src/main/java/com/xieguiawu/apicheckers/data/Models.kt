@@ -277,3 +277,162 @@ data class GalaxyCostEntry(
     val spent: Double = 0.0, // 正数＝扣费，负数＝返还
     val left: Double = 0.0,  // 变更后现金余额
 )
+
+// ── 白B.AI（免费 0-Credits flash 通道） ──────────────────────
+//
+// 序列化名与 Go 姊妹项目 models.go 的 json tag 一致（camelCase 对齐
+// BaiRecord/BaiUsageStats），共享 fixture。契约来源
+// Go 仓 docs/plans/2026-09-04-bai-provider.md §二-b/§八。
+
+/** 平台积分与美元换算率（basicConfig.creditsPerDollar，1 积分 = 1e-6 美元） */
+const val BaiPointsPerDollar = 1_000_000L
+
+/** 即将过期积分黄色告警阈值（口径 2026-09-06 用户定：只警过期部分） */
+const val BaiExpiringWarnPoints = 1_000_000L
+
+/** 免费 0-Credits flash 通道盯梢清单（pi-subagent 默认免费模型源，快照 2026-09-04） */
+val BaiFreeFlashModels = listOf(
+    "deepseek-v4-flash",
+    "deepseek-v4-flash-vision-exp",
+    "glm-5.3-flash",
+    "qwen3.8-flash",
+)
+
+/**
+ * 白B.AI 账号。apiKey 为 chat.b.ai 侧栏创建的 sk- 密钥——同一把 key 在推理面
+ * （api.b.ai）与控制台（chat.b.ai tRPC）两处通用，无需浏览器 Cookie。
+ */
+@Serializable
+data class BaiAccount(
+    val id: String,
+    val name: String,
+    val apiKey: String,
+) {
+    val keyConfigured: Boolean get() = apiKey.isNotBlank()
+
+    /** 🔴 防调试日志泄密 */
+    override fun toString(): String =
+        "BaiAccount(id=$id, name=$name, apiKey=****)"
+}
+
+/** 积分额度（usage.points + usage.summary）。单位是平台积分，不是元、不是 token。 */
+@Serializable
+data class BaiPoints(
+    val balance: Long = 0,
+    val expiring: Long = 0,
+    @SerialName("monthlySpent") val monthlySpent: Long = 0,
+    @SerialName("hasMonthly") val hasMonthly: Boolean = false,
+)
+
+/** 积分的名义美元等值（≈ 标记提醒它是换算值、不是账单金额）。 */
+fun baiDollar(points: Long): Double = points.toDouble() / BaiPointsPerDollar
+
+/** 单个模型（/v1/models 列表项白名单）。 */
+@Serializable
+data class BaiModel(
+    val id: String,
+    @SerialName("owned_by") val ownedBy: String = "",
+    @SerialName("supported_endpoint_types") val endpoints: List<String> = emptyList(),
+)
+
+/**
+ * 模型清单 + 免费通道探活。Probes 只覆盖盯梢清单里存在的模型——清单「在」≠
+ * 运行时可用（2026-09-06 实测 deepseek-v4-flash 清单在但推理回 503 间歇故障）。
+ */
+@Serializable
+data class BaiPlan(
+    val models: List<BaiModel> = emptyList(),
+    val probes: List<BaiProbe> = emptyList(),
+) {
+    /** 盯梢清单中不在模型列表里的项（缺失 = 下架，直接影响 pi-subagent 免费模型源） */
+    fun missingFreeFlash(): List<String> {
+        val have = models.map { it.id }.toSet()
+        return BaiFreeFlashModels.filterNot { it in have }
+    }
+}
+
+/** 免费通道运行时探活结果。 */
+@Serializable
+data class BaiProbe(
+    val model: String,
+    val alive: Boolean,
+    val detail: String = "",
+)
+
+/** 单条推理记录（usage.records 白名单字段，router_* 等忽略）。 */
+@Serializable
+data class BaiRecord(
+    val model: String = "",
+    @SerialName("createdAt") val createdAt: String = "",
+    @SerialName("inputTokens") val inputTokens: Long = 0,
+    @SerialName("outputTokens") val outputTokens: Long = 0,
+    @SerialName("totalTokens") val totalTokens: Long = 0,
+    @SerialName("costPoints") val costPoints: Long = 0,
+)
+
+/** 单模型聚合（--stats 用量分析）。 */
+@Serializable
+data class BaiModelUsage(
+    val model: String = "",
+    val requests: Long = 0,
+    @SerialName("inputTokens") val inputTokens: Long = 0,
+    @SerialName("outputTokens") val outputTokens: Long = 0,
+    @SerialName("totalTokens") val totalTokens: Long = 0,
+    @SerialName("costPoints") val costPoints: Long = 0,
+)
+
+/** 用量分析聚合（窗口 = 聚合范围内最早/最晚记录；complete=false = 被页数上限截断）。 */
+@Serializable
+data class BaiUsageStats(
+    @SerialName("recordsFetched") val recordsFetched: Int = 0,
+    val complete: Boolean = false,
+    @SerialName("windowStart") val windowStart: String = "",
+    @SerialName("windowEnd") val windowEnd: String = "",
+    @SerialName("perModel") val perModel: List<BaiModelUsage> = emptyList(),
+    @SerialName("totalRequests") val totalRequests: Long = 0,
+    @SerialName("totalTokens") val totalTokens: Long = 0,
+    @SerialName("totalCostPoints") val totalCostPoints: Long = 0,
+)
+
+/**
+ * 把逐请求记录聚合为按模型统计（纯函数，与 Go models.AggregateBaiUsage 同口径：
+ * requests 降序、同数按模型名字典序；窗口取 min/max createdAt）。
+ */
+fun aggregateBaiUsage(recs: List<BaiRecord>): BaiUsageStats {
+    var totalRequests = 0L
+    var totalTokens = 0L
+    var totalCost = 0L
+    var windowStart = ""
+    var windowEnd = ""
+    val idx = LinkedHashMap<String, BaiModelUsage>()
+    for (r in recs) {
+        val cur = idx[r.model] ?: BaiModelUsage(model = r.model).also { idx[r.model] = it }
+        idx[r.model] = cur.copy(
+            requests = cur.requests + 1,
+            inputTokens = cur.inputTokens + r.inputTokens,
+            outputTokens = cur.outputTokens + r.outputTokens,
+            totalTokens = cur.totalTokens + r.totalTokens,
+            costPoints = cur.costPoints + r.costPoints,
+        )
+        totalRequests++
+        totalTokens += r.totalTokens
+        totalCost += r.costPoints
+        if (r.createdAt.isNotEmpty()) {
+            if (windowEnd.isEmpty() || r.createdAt > windowEnd) windowEnd = r.createdAt
+            if (windowStart.isEmpty() || r.createdAt < windowStart) windowStart = r.createdAt
+        }
+    }
+    val per = idx.values.sortedWith(
+        compareByDescending<BaiModelUsage> { it.requests }.thenBy { it.model },
+    )
+    return BaiUsageStats(
+        recordsFetched = recs.size,
+        complete = false, // 由 repo 翻页层按 has_more 决定
+        windowStart = windowStart,
+        windowEnd = windowEnd,
+        perModel = per,
+        totalRequests = totalRequests,
+        totalTokens = totalTokens,
+        totalCostPoints = totalCost,
+    )
+}

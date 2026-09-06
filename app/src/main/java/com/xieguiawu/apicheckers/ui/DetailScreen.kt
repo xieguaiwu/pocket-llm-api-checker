@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -54,6 +55,10 @@ import com.xieguiawu.apicheckers.ui.theme.Divider
 import com.xieguiawu.apicheckers.ui.theme.Ok
 import com.xieguiawu.apicheckers.ui.theme.TextMain
 import com.xieguiawu.apicheckers.ui.theme.TextSub
+import com.xieguiawu.apicheckers.BaiUi
+import com.xieguiawu.apicheckers.data.BaiExpiringWarnPoints
+import com.xieguiawu.apicheckers.data.BaiFreeFlashModels
+import com.xieguiawu.apicheckers.data.baiDollar
 import com.xieguiawu.apicheckers.ui.theme.Warn
 import java.time.Duration
 import java.time.Instant
@@ -742,6 +747,208 @@ private fun GalaxyInstanceCard(inst: GalaxyInstance) {
                     }
                 }
             }
+        }
+    }
+}
+
+// ── 白B.AI 详情（模型清单 + 积分额度 + 用量分析 + 免费通道四态） ──
+
+@Composable
+fun BaiDetailScreen(vm: AppViewModel, id: String, onBack: () -> Unit) {
+    val ui by vm.uiState.collectAsState()
+    val b = ui.baiList.firstOrNull { it.account?.id == id }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Bg)
+            .safeDrawingPadding()
+            .padding(horizontal = 20.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = TextMain)
+            }
+            Text(
+                b?.account?.name ?: "白B.AI 详情",
+                color = TextMain,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = { vm.refreshBai(id) }) {
+                Icon(Icons.Filled.Refresh, contentDescription = "刷新", tint = TextSub)
+            }
+        }
+        if (b == null) {
+            Text(
+                "账号不存在或已被删除",
+                color = TextSub,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+            ) {
+                item(key = "points") { BaiPointsCard(b) }
+                if (b.stats != null) item(key = "stats") { BaiStatsCard(b.stats) }
+                item(key = "flash") { BaiFlashCard(b.plan) }
+                if (b.plan != null) item(key = "models") { BaiModelsCard(b.plan) }
+                b.error?.let { err -> item(key = "error") { ErrorCard(err) } }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BaiPointsCard(b: BaiUi) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            val pts = b.points
+            if (pts != null) {
+                val df = java.text.DecimalFormat("#,##0")
+                Row {
+                    Column(Modifier.weight(1f)) {
+                        Text("积分余额", color = TextSub, fontSize = 12.sp)
+                        Text(
+                            df.format(pts.balance),
+                            color = if (pts.balance <= 0) Danger else TextMain,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text("≈ $${"%.2f".format(java.util.Locale.US, baiDollar(pts.balance))}", color = TextSub, fontSize = 12.sp)
+                    }
+                    if (pts.hasMonthly) {
+                        Column(Modifier.weight(1f)) {
+                            Text("本月消耗", color = TextSub, fontSize = 12.sp)
+                            Text(df.format(pts.monthlySpent), color = TextMain, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                            Text("≈ $${"%.2f".format(java.util.Locale.US, baiDollar(pts.monthlySpent))}", color = TextSub, fontSize = 12.sp)
+                        }
+                    }
+                }
+                // 过期提醒（口径 2026-09-06：只警过期 ≥100 万；耗尽态红色已最高级不叠）
+                if (pts.expiring >= BaiExpiringWarnPoints && pts.balance > 0) {
+                    Text(
+                        "其中 ${df.format(pts.expiring)} 即将过期，不花就没了",
+                        color = Warn,
+                        fontSize = 13.sp,
+                    )
+                }
+            } else if (b.error == null) {
+                Text("加载中…", color = TextSub, fontSize = 14.sp)
+            } else {
+                Text("积分 暂无数据", color = TextSub, fontSize = 14.sp)
+            }
+        }
+    }
+}
+
+/** 用量分析卡：窗口 + 总量 + 按模型统计（截断时明示「数据不完整」）。 */
+@Composable
+private fun BaiStatsCard(s: com.xieguiawu.apicheckers.data.BaiUsageStats) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("用量分析", color = TextMain, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            val df = java.text.DecimalFormat("#,##0")
+            if (s.windowStart.isNotEmpty()) {
+                Text("窗口 ${s.windowStart.take(10)} ~ ${s.windowEnd.take(10)}", color = TextSub, fontSize = 13.sp)
+            }
+            Text("${df.format(s.totalRequests)} 次 · ${df.format(s.totalTokens)} tokens", color = TextMain, fontSize = 13.sp)
+            if (s.totalCostPoints > 0) {
+                Text(
+                    "消耗积分 ${df.format(s.totalCostPoints)}（≈ $${"%.2f".format(java.util.Locale.US, baiDollar(s.totalCostPoints))}）",
+                    color = TextSub,
+                    fontSize = 13.sp,
+                )
+            }
+            for (m in s.perModel) {
+                Text(
+                    "${m.model}  ${df.format(m.requests)} 次 · in ${df.format(m.inputTokens)} / out ${df.format(m.outputTokens)} / total ${df.format(m.totalTokens)}",
+                    color = TextMain,
+                    fontSize = 12.sp,
+                )
+            }
+            if (!s.complete) {
+                Text("数据不完整（达到拉取上限，统计只覆盖以上范围）", color = Warn, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+/** 免费通道卡：四态（✓存活/✓未探/⚠运行时故障/✗缺失），与 Go renderBaiFlashLane 同口径。 */
+@Composable
+private fun BaiFlashCard(plan: com.xieguiawu.apicheckers.data.BaiPlan?) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("免费通道（pi-subagent 默认模型源）", color = TextMain, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            if (plan == null) {
+                Text("暂无数据", color = TextSub, fontSize = 13.sp)
+                return@Column
+            }
+            val missing = plan.missingFreeFlash().toSet()
+            val probeOf = plan.probes.associateBy { it.model }
+            for (want in BaiFreeFlashModels) {
+                if (want in missing) continue
+                val p = probeOf[want]
+                when {
+                    p == null -> Text("✓ $want", color = Accent, fontSize = 13.sp)
+                    p.alive -> Text("✓ $want", color = Accent, fontSize = 13.sp)
+                    else -> {
+                        Text("⚠ $want 运行时故障", color = Danger, fontSize = 13.sp)
+                        if (p.detail.isNotEmpty()) Text(p.detail, color = TextSub, fontSize = 12.sp)
+                    }
+                }
+            }
+            if (missing.isNotEmpty()) {
+                Text(
+                    "⚠ 缺失：${missing.joinToString("、")}（pi-subagent 默认免费模型源受影响）",
+                    color = Danger,
+                    fontSize = 13.sp,
+                )
+            }
+        }
+    }
+}
+
+/** 模型清单卡（去重排序后的全部可用模型）。 */
+@Composable
+private fun BaiModelsCard(plan: com.xieguiawu.apicheckers.data.BaiPlan) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("模型 ${plan.models.size} 个", color = TextMain, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(plan.models.joinToString("、") { it.id }, color = TextSub, fontSize = 12.sp)
         }
     }
 }
