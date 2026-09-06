@@ -1,1 +1,1 @@
-Check DeepSeek & OpenCode API usage, balance and limits
+Check DeepSeek, OpenCode and Qwen API usage, balance and limits
