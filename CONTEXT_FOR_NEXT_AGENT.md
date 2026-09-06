@@ -1,6 +1,21 @@
 # CONTEXT_FOR_NEXT_AGENT.md
 
-## F-Droid 发布准备（2026-08-24）
+## F-Droid 发布准备（2026-09-06 复核修正）
+- 🔴 **原 yml 的 Builds 块不可构建**：既无 `subdir: app` 也无 `gradle: yes`。
+  fdroidserver `metadata.py:307 build_method()` 在无 maven/gradle/output 字段时**回落 ant**
+  ⇒ GitLab CI 必挂。已补 `subdir: app` + `gradle: - yes`。
+- yml 已同步到 v1.1.0（versionCode 2），并补 AuthorEmail
+- 新增 `scripts/validate-fdroid-metadata.sh`（校验 commit: 是真 tag / changelog 齐 / CurrentVersion 一致）
+- 新增 `.github/workflows/ci.yml`（此前**完全无 CI**）。首跑即红：`lintDebug` 报
+  `NewApi` error——`android:forceDarkAllowed` 放在 `values/themes.xml` 而 minSdk 26。
+  已把整份 style 移到 `values-v29/themes.xml`（行为不变，26-28 本来就会忽略该属性）。
+  现 CI 绿（run fd2d8bf3）。
+- **智星云 galaxy provider 仍未 bump 版本**（HEAD 上 versionCode 还是 2）⇒ 不进 Builds。
+  真机冒烟通过后：bump 到 versionCode 3 / versionName 1.2.0 → tag v1.2.0 →
+  补 `changelogs/3.txt`（en+zh）→ yml 追加第三个 Build 块
+- ⚠️ 本地 main 曾落后 origin 1 commit（Galaxy provider，+2883 行）——已 ff 拉回
+
+## F-Droid 发布准备（2026-08-24，历史记录，部分内容已被上面修正）
 - **状态**：Phase 1 完成——fastlane 元数据（en-US + zh-CN：short/full description、icon.png 从矢量精确渲染、2 张占位截图[真机截图待替换]、changelogs/1.txt）+ `scripts/verify-reproducible.sh`（双构建哈希对比）+ fdroiddata 草稿 `docs/fdroid/com.xieguiawu.apicheckers.yml`（含 NonFreeNet 声明，提交位置 metadata/com.xieguiawu.apicheckers.yml）
 - **合规结论**：MIT / 纯 FOSS 依赖 / 单 INTERNET 权限 / 无广告统计 → 硬性要求全满足；缺 git tag 已补（v1.0.0）
 - **待办**：①真机侧载 `app-release-unsigned.apk` 后截图替换 phoneScreenshots 占位图 ②用户 GitLab fork fdroiddata 提 MR ③发版纪律：bump versionCode/versionName → tag vX.Y.Z → 更新 changelogs/<versionCode>.txt（Tags 模式自动发现）
