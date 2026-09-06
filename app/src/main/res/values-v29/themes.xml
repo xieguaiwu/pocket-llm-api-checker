@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  android:forceDarkAllowed only exists on API 29+. Keeping it in values/ made
+  lint fail the build with a NewApi error (minSdk is 26), which also turned CI
+  red. Declaring the whole style here means API 29+ gets this exact definition
+  and API 26-28 falls back to values/themes.xml, where the attribute is absent
+  and would have been ignored by the framework anyway. Behaviour is unchanged.
+-->
+<resources>
+    <style name="Theme.ApiCheckers" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0E1116</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:statusBarColor">#0E1116</item>
+        <item name="android:navigationBarColor">#0E1116</item>
+    </style>
+</resources>
