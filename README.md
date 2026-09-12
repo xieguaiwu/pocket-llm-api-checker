@@ -4,7 +4,7 @@
 
 A minimal dark-mode Android app to quickly check your **DeepSeek API**, **OpenCode** (Zen + Go plans) and **Qwen Token Plan** (Alibaba Cloud Bailian) usage on your phone.
 
-![dark minimal UI](docs/screenshot-placeholder.png)
+<!-- TODO(F-Droid): add a real-device screenshot here (fastlane currently holds placeholders) -->
 
 ## Features
 

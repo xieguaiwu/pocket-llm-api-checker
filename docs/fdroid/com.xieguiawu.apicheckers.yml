@@ -4,7 +4,9 @@
 # 说明：Summary/Description 由仓库内 fastlane 元数据自动带入，此处不重复。
 #       NonFreeNet：应用依赖 DeepSeek/opencode.ai/阿里云百炼/智星云 专有网络服务（不阻止收录）。
 # 校验：bash scripts/validate-fdroid-metadata.sh docs/fdroid/com.xieguiawu.apicheckers.yml
-# 注意：Builds 只列已打 tag 的版本。HEAD 上的智星云 galaxy provider 尚未 bump 版本，
+# 可复现性（2026-09-12 于 tag v1.1.0 实测，双构建 unsigned 比对；签名 APK 逐构建不同）：
+#   v1.1.0 -> b34c8279a7d5ec5c3a4bc5c752eabd218f451fbefafe92fe664f7fe701667757
+# 注意：Builds 只列已打 tag 的版本。HEAD 上的智星云 + 白B.AI provider 尚未 bump 版本，
 #       发版（versionCode 3 / tag v1.2.0）后再追加第三个 Build 块。
 
 Categories:

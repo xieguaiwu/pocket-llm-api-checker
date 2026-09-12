@@ -1,5 +1,15 @@
 # CONTEXT_FOR_NEXT_AGENT.md
 
+## 2026-09-12 材料补全批（提交就绪）
+- **可复现性实测通过**：tag v1.1.0 干净 worktree 双构建，unsigned APK 一致
+  `b34c8279a7d5ec5c3a4bc5c752eabd218f451fbefafe92fe664f7fe701667757`
+  （对应旧记录「预期可复现」→ 已实锤；yml 头部已注记）
+- 新增 `docs/fdroid/SUBMIT_GUIDE.md`（Web IDE 2 分钟提交法 + MR 描述 + 评审要点）
+  + `docs/fdroid/fdroiddata-mr-0001.patch`（已在干净树验证可 `git am`）
+- README/README_zh 破图修复：`docs/screenshot-placeholder.png` 从未入库 →
+  移除图片引用（真机截图待补，见待办）
+- 待用户：注册 GitLab → 按 SUBMIT_GUIDE 提 MR；真机冒烟后发 v1.2.0
+
 ## F-Droid 发布准备（2026-09-06 复核修正）
 - 🔴 **原 yml 的 Builds 块不可构建**：既无 `subdir: app` 也无 `gradle: yes`。
   fdroidserver `metadata.py:307 build_method()` 在无 maven/gradle/output 字段时**回落 ant**
@@ -90,4 +100,4 @@ API Checkers — 极简深色 Android app，查看 DeepSeek API、OpenCode（Zen
 - graphify-out/: 存在（**2026-08-29 晚间 galaxy provider 后重建**；图谱不入库（.gitignore））
 
 ## 最后更新时间
-2026-09-06 14:4x
+2026-09-12（F-Droid 材料补全批：可复现实测 + SUBMIT_GUIDE + MR patch + README 破图修复）
