@@ -11,10 +11,10 @@
 | 无专有二进制入库 | ✅ |
 | Gradle wrapper 已提交 | ✅ |
 | git tag `v1.1.0` | ✅ 已打并推送 |
-| fastlane 元数据（en-US + zh-CN） | ✅ 文案完整；截图是占位图，待真机替换 |
+| fastlane 元数据（en-US + zh-CN） | ✅ 文案完整 + 真机截图（2026-09-12） |
 | 可复现构建验证（unsigned 双构建） | ✅ `b34c8279…6757`（tag v1.1.0，2026-09-12 实测） |
 | 真机冒烟（录入真实凭据） | ❌ 未做（不阻塞提交；v1.2.0 发版前需要） |
-| GitLab 账号 | ⏳ 注册中 |
+| GitLab 账号 | ✅ 已注册（2026-09-12） |
 
 ## 已就绪的文件
 
@@ -22,7 +22,7 @@
 |---|---|
 | `com.xieguiawu.apicheckers.yml` | fdroiddata metadata（类别 `System`；Builds 列 v1.0.0 + v1.1.0）|
 | `fdroiddata-mr-0001.patch` | 完整 commit 补丁（可直接 `git am`）|
-| `../../fastlane/metadata/` | 双语商店文案（截图占位）|
+| `../../fastlane/metadata/` | 双语商店文案 + 真机截图 |
 
 ## 提交方法（二选一）
 
@@ -148,7 +148,7 @@ app to check DeepSeek, OpenCode (Zen + Go plans) and Qwen Token Plan
 - [ ] `git ls-remote --tags origin` 含 v1.0.0 / v1.1.0
 - [ ] `fastlane/metadata/android/{en-US,zh-CN}/changelogs/{1,2}.txt` 齐全
 - [ ] `bash scripts/validate-fdroid-metadata.sh docs/fdroid/com.xieguiawu.apicheckers.yml` 通过
-- [ ] （建议，非阻塞）真机截图替换 `fastlane/.../phoneScreenshots/` 占位图
+- [x] 真机截图已替换（2026-09-12；主页 1 张——设置页截图因涂抹遮挡弃用）
 
 MR 合并后 24-48 小时出现在 F-Droid 主仓库（签名步骤人工介入）。
 

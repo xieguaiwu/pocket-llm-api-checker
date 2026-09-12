@@ -4,7 +4,7 @@
 
 一个极简深色模式的 Android 应用，在手机上快速查看 **DeepSeek API**、**OpenCode（Zen + Go 两个 plan）** 与 **Qwen Token Plan（阿里云百炼）** 的使用情况。
 
-<!-- TODO(F-Droid)：此处待换真机截图（fastlane 现为占位图） -->
+![API Checkers 主页——余额与配额窗口（真机实截）](docs/screenshot.png)
 
 ## 功能
 

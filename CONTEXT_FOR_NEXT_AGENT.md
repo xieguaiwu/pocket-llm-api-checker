@@ -6,8 +6,9 @@
   （对应旧记录「预期可复现」→ 已实锤；yml 头部已注记）
 - 新增 `docs/fdroid/SUBMIT_GUIDE.md`（Web IDE 2 分钟提交法 + MR 描述 + 评审要点）
   + `docs/fdroid/fdroiddata-mr-0001.patch`（已在干净树验证可 `git am`）
-- README/README_zh 破图修复：`docs/screenshot-placeholder.png` 从未入库 →
-  移除图片引用（真机截图待补，见待办）
+- README/README_zh 破图修复并补真机 hero：`docs/screenshot.png`（真机主页实截）；
+  fastlane `phoneScreenshots/1.png` 同步换真机图，占位 2.png 删除
+  （设置页截图含涂抹遮挡弃用）
 - 待用户：注册 GitLab → 按 SUBMIT_GUIDE 提 MR；真机冒烟后发 v1.2.0
 
 ## F-Droid 发布准备（2026-09-06 复核修正）
