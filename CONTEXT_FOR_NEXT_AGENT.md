@@ -9,7 +9,9 @@
 - README/README_zh 破图修复并补真机 hero：`docs/screenshot.png`（真机主页实截）；
   fastlane `phoneScreenshots/1.png` 同步换真机图，占位 2.png 删除
   （设置页截图含涂抹遮挡弃用）
-- 待用户：注册 GitLab → 按 SUBMIT_GUIDE 提 MR；真机冒烟后发 v1.2.0
+- **fdroiddata 已提交**：MR !48685（2026-09-12）；fork CI 因新账号身份验证零 job，
+  本地 `fdroid lint`（2.4.5）exit 0；等待审核（排期常 1-4 周），响应 reviewer 需登录 GitLab 网页
+- 待用户：真机冒烟后发 v1.2.0
 
 ## F-Droid 发布准备（2026-09-06 复核修正）
 - 🔴 **原 yml 的 Builds 块不可构建**：既无 `subdir: app` 也无 `gradle: yes`。

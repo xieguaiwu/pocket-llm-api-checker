@@ -69,7 +69,8 @@
 
 ## F-Droid
 
-F-Droid 收录进行中（草稿见 `docs/fdroid/com.xieguiawu.apicheckers.yml`）。
+已提交 fdroiddata（2026-09-12）：[MR !48685](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/48685)，等待审核
+（草稿见 `docs/fdroid/com.xieguiawu.apicheckers.yml`）。
 应用带有 `NonFreeNet` 反特性标记：它是 DeepSeek、opencode.ai 与阿里云
 专有服务的客户端。无广告、无追踪、无遥测。
 

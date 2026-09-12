@@ -2,6 +2,8 @@
 
 本目录包含提交流程所需的一切。你只需要一个 GitLab 账号，约 2 分钟完成。
 
+> ✅ **已提交**：[MR !48685](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/48685)（2026-09-12），等待审核（排期常 1-4 周）。以下内容保留作记录；fork CI 因新账号身份验证不可用（零 job），本地 `fdroid lint`（2.4.5）exit 0。
+
 ## 前置条件（当前状态，2026-09-12）
 
 | 条件 | 状态 |
@@ -115,9 +117,8 @@ app to check DeepSeek, OpenCode (Zen + Go plans) and Qwen Token Plan
 
 ## Details
 - MIT licensed
-- NonFreeNet declared: a client for proprietary services (DeepSeek,
-  opencode.ai, Alibaba Cloud Bailian, AI Galaxy). No ads, no tracking,
-  no telemetry.
+- NonFreeNet declared: a client for proprietary services (DeepSeek, opencode.ai,
+  Alibaba Cloud Bailian). No ads, no tracking, no telemetry.
 - Single INTERNET permission; API keys/cookies encrypted with Android
   Keystore AES-GCM; allowBackup=false; cleartext traffic disabled
 - Some panels read official web pages (OpenCode workspace billing, Bailian

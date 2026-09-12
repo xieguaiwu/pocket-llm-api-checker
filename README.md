@@ -69,9 +69,9 @@ Personal tool. Not affiliated with DeepSeek, OpenCode or Alibaba Cloud. Zen bill
 
 ## F-Droid
 
-**Not submitted yet.** `docs/fdroid/com.xieguiawu.apicheckers.yml` is a
-ready-to-file fdroiddata metadata draft; opening the merge request needs a
-GitLab account. No MR exists in `gitlab.com/fdroid/fdroiddata` for this app.
+**Submitted (2026-09-12)** — [fdroiddata MR !48685](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/48685),
+in review. (The fork's CI shows "failed" with zero jobs — a fresh-account
+identity-verification gate, not a metadata problem; `fdroid lint` passes locally.)
 
 The app carries a `NonFreeNet` anti-feature: it is a client for the proprietary
 DeepSeek, opencode.ai and Alibaba Cloud services. No ads, no tracking, no telemetry.
