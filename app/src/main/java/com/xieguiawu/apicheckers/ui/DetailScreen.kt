@@ -56,6 +56,7 @@ import com.xieguiawu.apicheckers.ui.theme.Ok
 import com.xieguiawu.apicheckers.ui.theme.TextMain
 import com.xieguiawu.apicheckers.ui.theme.TextSub
 import com.xieguiawu.apicheckers.BaiUi
+import com.xieguiawu.apicheckers.LongCatUi
 import com.xieguiawu.apicheckers.data.BaiExpiringWarnPoints
 import com.xieguiawu.apicheckers.data.BaiFreeFlashModels
 import com.xieguiawu.apicheckers.data.baiDollar
@@ -940,6 +941,114 @@ private fun BaiFlashCard(plan: com.xieguiawu.apicheckers.data.BaiPlan?) {
 /** 模型清单卡（去重排序后的全部可用模型）。 */
 @Composable
 private fun BaiModelsCard(plan: com.xieguiawu.apicheckers.data.BaiPlan) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("模型 ${plan.models.size} 个", color = TextMain, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(plan.models.joinToString("、") { it.id }, color = TextSub, fontSize = 12.sp)
+        }
+    }
+}
+
+// ── LongCat 详情（余额探活状态 + 模型清单，同 Go RenderLongCatDetail） ──
+
+@Composable
+fun LongCatDetailScreen(vm: AppViewModel, id: String, onBack: () -> Unit) {
+    val ui by vm.uiState.collectAsState()
+    val lc = ui.longCatList.firstOrNull { it.account?.id == id }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Bg)
+            .safeDrawingPadding()
+            .padding(horizontal = 20.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = TextMain)
+            }
+            Text(
+                lc?.account?.name ?: "LongCat 详情",
+                color = TextMain,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = { vm.refreshLongCat(id) }) {
+                Icon(Icons.Filled.Refresh, contentDescription = "刷新", tint = TextSub)
+            }
+        }
+        if (lc == null) {
+            Text(
+                "账号不存在或已被删除",
+                color = TextSub,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+            ) {
+                item(key = "balance") { LongCatBalanceCard(lc) }
+                if (lc.plan != null) item(key = "models") { LongCatModelsCard(lc.plan) }
+                lc.error?.let { err -> item(key = "error") { ErrorCard(err) } }
+            }
+        }
+    }
+}
+
+/** 余额状态卡：探活快照（绿=充足 / 红=不足），无公开配额 API 故只给状态不给数字。 */
+@Composable
+private fun LongCatBalanceCard(lc: LongCatUi) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (!lc.keyConfigured) {
+                Text("未配置 API Key，点击右上角设置添加", color = TextSub, fontSize = 14.sp)
+                return@Column
+            }
+            Text("预付费余额（按 token 计费）", color = TextSub, fontSize = 13.sp)
+            val ok = lc.usage?.balanceOK
+            if (ok != null) {
+                Text(
+                    if (ok) "余额充足" else "余额不足（需充值）",
+                    color = if (ok) Ok else Danger,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            } else if (lc.error == null) {
+                Text("加载中…", color = TextSub, fontSize = 14.sp)
+            } else {
+                Text("余额 暂无数据", color = TextSub, fontSize = 14.sp)
+            }
+            Text(
+                "余额由小额推理探活间接判断（无公开配额 API；探活消耗约 $0.000002/次）。",
+                color = TextSub,
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+/** 模型清单卡（去重排序后的全部可用模型）。 */
+@Composable
+private fun LongCatModelsCard(plan: com.xieguiawu.apicheckers.data.LongCatPlan) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Card),

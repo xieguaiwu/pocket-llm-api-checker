@@ -13,6 +13,11 @@ import com.xieguiawu.apicheckers.data.BaiPoints
 import com.xieguiawu.apicheckers.data.BaiPlan
 import com.xieguiawu.apicheckers.data.BaiRepo
 import com.xieguiawu.apicheckers.data.BaiUsageStats
+import com.xieguiawu.apicheckers.data.LongCatAccount
+import com.xieguiawu.apicheckers.data.LongCatAuthError
+import com.xieguiawu.apicheckers.data.LongCatPlan
+import com.xieguiawu.apicheckers.data.LongCatRepo
+import com.xieguiawu.apicheckers.data.LongCatUsage
 import com.xieguiawu.apicheckers.data.GalaxyAccount
 import com.xieguiawu.apicheckers.data.GalaxyBalance
 import com.xieguiawu.apicheckers.data.GalaxyCost
@@ -99,6 +104,20 @@ data class BaiUi(
     val keyConfigured: Boolean get() = account?.keyConfigured == true
 }
 
+/**
+ * 单个 LongCat 账号的 UI 状态（同 Go LongCatResult：plan/usage 两路独立）。
+ * usage.balanceOK=null 表示未探活；探活 402（余额不足）不是 error。
+ */
+data class LongCatUi(
+    val account: LongCatAccount? = null,
+    val plan: LongCatPlan? = null,
+    val usage: LongCatUsage? = null,
+    val error: String? = null,
+    val loading: Boolean = false,
+) {
+    val keyConfigured: Boolean get() = account?.keyConfigured == true
+}
+
 /** 全局 UI 状态 */
 data class UiState(
     val deepSeekList: List<DeepSeekUi> = emptyList(),
@@ -106,6 +125,7 @@ data class UiState(
     val qwenList: List<QwenUi> = emptyList(),
     val galaxyList: List<GalaxyUi> = emptyList(),
     val baiList: List<BaiUi> = emptyList(),
+    val longCatList: List<LongCatUi> = emptyList(),
     val refreshing: Boolean = false,
     val lastUpdated: Long = 0L,
 )
@@ -118,6 +138,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val qwenRepo = QwenRepo()
     private val galaxyRepo = GalaxyRepo()
     private val baiRepo = BaiRepo()
+    private val longCatRepo = LongCatRepo()
     private val _ui = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _ui.asStateFlow()
 
@@ -135,6 +156,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val qwenAccounts = SecureSettings.getQwenAccounts().map { QwenUi(account = it) }
         val galaxyAccounts = SecureSettings.getGalaxyAccounts().map { GalaxyUi(account = it) }
         val baiAccounts = SecureSettings.getBaiAccounts().map { BaiUi(account = it) }
+        val longCatAccounts = SecureSettings.getLongCatAccounts().map { LongCatUi(account = it) }
         _ui.update {
             it.copy(
                 deepSeekList = dsAccounts,
@@ -142,6 +164,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 qwenList = qwenAccounts,
                 galaxyList = galaxyAccounts,
                 baiList = baiAccounts,
+                longCatList = longCatAccounts,
             )
         }
     }
@@ -158,6 +181,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val freshQwen = SecureSettings.getQwenAccounts()
             val freshGalaxy = SecureSettings.getGalaxyAccounts()
             val freshBai = SecureSettings.getBaiAccounts()
+            val freshLongCat = SecureSettings.getLongCatAccounts()
             _ui.update { st ->
                 val dsMerged = freshDs.map { acc ->
                     st.deepSeekList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: DeepSeekUi(account = acc)
@@ -174,15 +198,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val baiMerged = freshBai.map { acc ->
                     st.baiList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: BaiUi(account = acc)
                 }
-                st.copy(deepSeekList = dsMerged, accounts = merged, qwenList = qwenMerged, galaxyList = galaxyMerged, baiList = baiMerged)
+                val longCatMerged = freshLongCat.map { acc ->
+                    st.longCatList.firstOrNull { it.account?.id == acc.id }?.copy(account = acc) ?: LongCatUi(account = acc)
+                }
+                st.copy(deepSeekList = dsMerged, accounts = merged, qwenList = qwenMerged, galaxyList = galaxyMerged, baiList = baiMerged, longCatList = longCatMerged)
             }
-            // 并行刷新所有 DeepSeek / OpenCode / Qwen / 智星云账号
+            // 并行刷新所有 DeepSeek / OpenCode / Qwen / 智星云 / LongCat 账号
             kotlinx.coroutines.coroutineScope {
                 freshDs.forEach { launch { refreshDeepSeekNow(it.id) } }
                 fresh.forEach { launch { refreshAccountNow(it.id) } }
                 freshQwen.forEach { launch { refreshQwenNow(it.id) } }
                 freshGalaxy.forEach { launch { refreshGalaxyNow(it.id) } }
                 freshBai.forEach { launch { refreshBaiNow(it.id) } }
+                freshLongCat.forEach { launch { refreshLongCatNow(it.id) } }
             }
             val now = System.currentTimeMillis()
             _ui.update { it.copy(refreshing = false, lastUpdated = now) }
@@ -368,6 +396,53 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     plan = planR.getOrNull(),
                     points = pointsR.getOrNull(),
                     stats = statsR?.getOrNull(),
+                    error = error,
+                    loading = false,
+                ) else it
+            })
+        }
+    }
+
+    /** 刷新单个 LongCat 账号：模型清单 + 余额探活并行，同 Go refreshLongCat。 */
+    fun refreshLongCat(id: String) {
+        viewModelScope.launch { refreshLongCatNow(id) }
+    }
+
+    /**
+     * 两路独立：清单失败不抖掉探活结果，探活失败不抖掉清单。
+     * 探活 402（余额不足）是正常态而非错误；错误合并口径：认证错误最优先，清单错误次之
+     * （非认证探活错误与 Go 同口径静默忽略）。usage 非空 ⇔ 探活路有结论（成功或认证失败）。
+     */
+    private suspend fun refreshLongCatNow(id: String) {
+        val acc = SecureSettings.getLongCatAccounts().firstOrNull { it.id == id } ?: return
+        _ui.update { st ->
+            st.copy(longCatList = st.longCatList.map {
+                if (it.account?.id == id) it.copy(loading = true, error = null) else it
+            })
+        }
+        val r = kotlinx.coroutines.coroutineScope {
+            val plan = async { longCatRepo.models(acc.apiKey) }
+            val probe = async { longCatRepo.probeBalance(acc.apiKey) }
+            plan.await() to probe.await()
+        }
+        val (planR, probeR) = r
+        val probeOk = probeR.getOrNull()
+        val probeAuthFailed = probeR.exceptionOrNull()?.message == LongCatAuthError
+        val usage = when {
+            probeOk != null -> LongCatUsage(balanceOK = probeOk)
+            probeAuthFailed -> LongCatUsage(balanceOK = null)
+            else -> null
+        }
+        val error = listOfNotNull(
+            if (probeAuthFailed) LongCatAuthError else null,
+            planR.exceptionOrNull()?.message,
+        ).firstOrNull()
+        _ui.update { st ->
+            st.copy(longCatList = st.longCatList.map {
+                if (it.account?.id == id) LongCatUi(
+                    account = acc,
+                    plan = planR.getOrNull(),
+                    usage = usage,
                     error = error,
                     loading = false,
                 ) else it

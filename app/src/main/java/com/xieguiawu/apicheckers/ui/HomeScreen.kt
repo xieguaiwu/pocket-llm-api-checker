@@ -49,6 +49,7 @@ import com.xieguiawu.apicheckers.AppViewModel
 import com.xieguiawu.apicheckers.DeepSeekUi
 import com.xieguiawu.apicheckers.BaiUi
 import com.xieguiawu.apicheckers.GalaxyUi
+import com.xieguiawu.apicheckers.LongCatUi
 import com.xieguiawu.apicheckers.QwenUi
 import com.xieguiawu.apicheckers.data.BaiExpiringWarnPoints
 import com.xieguiawu.apicheckers.data.baiDollar
@@ -60,6 +61,7 @@ import com.xieguiawu.apicheckers.ui.theme.Bg
 import com.xieguiawu.apicheckers.ui.theme.Card
 import com.xieguiawu.apicheckers.ui.theme.Danger
 import com.xieguiawu.apicheckers.ui.theme.Divider
+import com.xieguiawu.apicheckers.ui.theme.Ok
 import com.xieguiawu.apicheckers.ui.theme.TextMain
 import com.xieguiawu.apicheckers.ui.theme.TextSub
 import com.xieguiawu.apicheckers.ui.theme.Warn
@@ -202,6 +204,7 @@ fun HomeScreen(
     onOpenQwen: (String) -> Unit,
     onOpenGalaxy: (String) -> Unit,
     onOpenBai: (String) -> Unit,
+    onOpenLongCat: (String) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val ui by vm.uiState.collectAsState()
@@ -319,6 +322,25 @@ fun HomeScreen(
             }
             items(ui.baiList, key = { it.account?.id ?: "bai-none" }) { b ->
                 BaiCard(b, onClick = { b.account?.let { onOpenBai(it.id) } })
+            }
+            if (ui.longCatList.isEmpty()) {
+                item(key = "longcat-empty") {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Card),
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Text(
+                            "暂无 LongCat 账号，点击下方「添加账号」配置",
+                            color = TextSub,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
+                }
+            }
+            items(ui.longCatList, key = { it.account?.id ?: "longcat-none" }) { lc ->
+                LongCatCard(lc, onClick = { lc.account?.let { onOpenLongCat(it.id) } })
             }
             item(key = "add") {
                 TextButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
@@ -693,6 +715,68 @@ private fun BaiCard(b: BaiUi, onClick: () -> Unit) {
                         }
                     }
                     b.error?.let { Text(it, color = Danger, fontSize = 13.sp) }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * LongCat 首页卡：余额探活状态（绿=充足 / 红=不足）+ 模型数。
+ * 无公开配额 API，余额为探活时点快照（402=不足，key 本身有效）。
+ */
+@Composable
+private fun LongCatCard(lc: LongCatUi, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = Card),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val ok = lc.usage?.balanceOK
+                val dot = when {
+                    ok == true -> Ok
+                    ok == false -> Danger
+                    lc.error != null -> Danger
+                    else -> TextSub
+                }
+                Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    lc.account?.name ?: "LongCat",
+                    color = TextMain,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            when {
+                !lc.keyConfigured -> {
+                    Text("未配置 API Key，点击右上角设置添加", color = TextSub, fontSize = 14.sp)
+                    lc.error?.let { Text(it, color = Danger, fontSize = 13.sp) }
+                }
+                else -> {
+                    val ok = lc.usage?.balanceOK
+                    if (ok != null) {
+                        Text(
+                            if (ok) "余额充足" else "余额不足（需充值）",
+                            color = if (ok) Ok else Danger,
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    } else if (lc.error == null) {
+                        Text("加载中…", color = TextSub, fontSize = 14.sp)
+                    }
+                    lc.plan?.let { plan ->
+                        if (plan.models.isNotEmpty()) {
+                            Text("模型 ${plan.models.size} 个", color = TextSub, fontSize = 13.sp)
+                        }
+                    }
+                    lc.error?.let { Text(it, color = Danger, fontSize = 13.sp) }
                 }
             }
         }

@@ -122,6 +122,16 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
     var baiApiKey by remember { mutableStateOf("") }
     var showBaiApiKey by remember { mutableStateOf(false) }
     var baiFormError by remember { mutableStateOf<String?>(null) }
+
+    // LongCat 账号
+    var longcatAccounts by remember { mutableStateOf(SecureSettings.getLongCatAccounts()) }
+    var longcatRenaming by remember { mutableStateOf<com.xieguiawu.apicheckers.data.LongCatAccount?>(null) }
+    var longcatRenameText by remember { mutableStateOf("") }
+    var longcatEditing by remember { mutableStateOf(false) }
+    var longcatName by remember { mutableStateOf("") }
+    var longcatApiKey by remember { mutableStateOf("") }
+    var showLongcatApiKey by remember { mutableStateOf(false) }
+    var longcatFormError by remember { mutableStateOf<String?>(null) }
     // 操作反馈
     var hint by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -864,6 +874,120 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                     }
                 }
             }
+            // ── LongCat 账号分区 ──
+            item(key = "longcat") {
+                SectionCard("LongCat 账号") {
+                    if (longcatAccounts.isEmpty()) {
+                        Text("暂无 LongCat 账号", color = TextSub, fontSize = 13.sp)
+                    }
+                    longcatAccounts.forEach { acc ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(acc.name, color = TextMain, fontSize = 14.sp)
+                                Text(keyTail(acc.apiKey), color = TextSub, fontSize = 12.sp)
+                            }
+                            IconButton(onClick = {
+                                longcatRenaming = acc
+                                longcatRenameText = acc.name
+                            }) {
+                                Icon(Icons.Filled.Edit, contentDescription = "重命名 LongCat 账号", tint = TextSub)
+                            }
+                            IconButton(onClick = {
+                                SecureSettings.deleteLongCatAccount(acc.id)
+                                longcatAccounts = SecureSettings.getLongCatAccounts()
+                                vm.refreshAll()
+                                flashHint("已删除 LongCat 账号「${acc.name}」")
+                            }) {
+                                Icon(Icons.Filled.Delete, contentDescription = "删除 LongCat 账号", tint = Danger)
+                            }
+                        }
+                    }
+
+                    if (longcatEditing) {
+                        HorizontalDivider(color = Divider, modifier = Modifier.padding(vertical = 4.dp))
+                        OutlinedTextField(
+                            value = longcatName,
+                            onValueChange = { longcatName = it },
+                            label = { Text("名称") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = longcatApiKey,
+                            onValueChange = { longcatApiKey = it },
+                            label = { Text("API Key（必填）") },
+                            singleLine = true,
+                            colors = fieldColors,
+                            visualTransformation = if (showLongcatApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showLongcatApiKey = !showLongcatApiKey }) {
+                                    Icon(
+                                        if (showLongcatApiKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                        contentDescription = if (showLongcatApiKey) "隐藏" else "显示",
+                                        tint = TextSub,
+                                    )
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "获取：longcat.chat/platform/api_keys 创建 App Key（Bearer 认证）。" +
+                                "无公开配额 API，余额通过小额推理探活判断（每次约 $0.000002）。",
+                            color = TextSub,
+                            fontSize = 12.sp,
+                        )
+                        longcatFormError?.let { Text(it, color = Danger, fontSize = 13.sp) }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Button(onClick = {
+                                val key = longcatApiKey.trim()
+                                if (key.isBlank()) {
+                                    longcatFormError = "API Key 为必填"
+                                } else {
+                                    val name = longcatName.trim().ifEmpty { "LongCat ${longcatAccounts.size + 1}" }
+                                    SecureSettings.saveLongCatAccount(
+                                        com.xieguiawu.apicheckers.data.LongCatAccount(
+                                            id = java.util.UUID.randomUUID().toString(),
+                                            name = name,
+                                            apiKey = key,
+                                        ),
+                                    )
+                                    longcatAccounts = SecureSettings.getLongCatAccounts()
+                                    longcatEditing = false
+                                    longcatName = ""
+                                    longcatApiKey = ""
+                                    longcatFormError = null
+                                    vm.refreshAll()
+                                    flashHint("LongCat 账号「$name」已保存，正在刷新数据")
+                                }
+                            }) {
+                                Text("保存账号")
+                            }
+                            TextButton(onClick = {
+                                longcatEditing = false
+                                longcatName = ""
+                                longcatApiKey = ""
+                                longcatFormError = null
+                            }) {
+                                Text("取消", color = TextSub)
+                            }
+                        }
+                    } else {
+                        TextButton(onClick = {
+                            longcatEditing = true
+                            longcatName = "LongCat ${longcatAccounts.size + 1}"
+                        }) {
+                            Icon(Icons.Filled.Add, contentDescription = null, tint = Accent)
+                            Spacer(Modifier.width(4.dp))
+                            Text("添加 LongCat 账号", color = Accent, fontSize = 14.sp)
+                        }
+                    }
+                }
+            }
         }
 
         // 账号重命名对话框
@@ -1039,6 +1163,40 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                 },
                 dismissButton = {
                     TextButton(onClick = { baiRenaming = null }) { Text("取消", color = TextSub) }
+                },
+            )
+        }
+
+        // LongCat 账号重命名对话框
+        longcatRenaming?.let { acc ->
+            AlertDialog(
+                onDismissRequest = { longcatRenaming = null },
+                containerColor = Card,
+                titleContentColor = TextMain,
+                textContentColor = TextMain,
+                title = { Text("重命名 LongCat 账号") },
+                text = {
+                    OutlinedTextField(
+                        value = longcatRenameText,
+                        onValueChange = { longcatRenameText = it },
+                        singleLine = true,
+                        colors = fieldColors,
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val newName = longcatRenameText.trim()
+                        if (newName.isNotBlank()) {
+                            SecureSettings.saveLongCatAccount(acc.copy(name = newName))
+                            longcatAccounts = SecureSettings.getLongCatAccounts()
+                            vm.refreshAll()
+                            flashHint("已重命名为「${newName}」")
+                        }
+                        longcatRenaming = null
+                    }) { Text("保存") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { longcatRenaming = null }) { Text("取消", color = TextSub) }
                 },
             )
         }

@@ -436,3 +436,49 @@ fun aggregateBaiUsage(recs: List<BaiRecord>): BaiUsageStats {
         totalCostPoints = totalCost,
     )
 }
+
+// ── LongCat（美团龙猫，OpenAI 兼容 /openai 路由） ──────────────
+//
+// 契约与 Go 姊妹项目 models.go 的 LongCat* 一一对应（fc30bb8）。平台无公开
+// 配额 API：GET /v1/models 成功 = key 有效；额度靠小额推理探活间接判断
+// （402=余额不足，探活消耗 ≈ $0.000002/次，失败不收费）。
+
+/**
+ * LongCat 账号。apiKey 为 longcat.chat/platform/api_keys 创建的 App Key
+ * （Bearer 认证，OpenAI 兼容格式）。
+ */
+@Serializable
+data class LongCatAccount(
+    val id: String,
+    val name: String,
+    val apiKey: String,
+) {
+    val keyConfigured: Boolean get() = apiKey.isNotBlank()
+
+    /** 🔴 防调试日志泄密（同 BaiAccount） */
+    override fun toString(): String =
+        "LongCatAccount(id=$id, name=$name, apiKey=****)"
+}
+
+/** 单个可用模型（/v1/models 列表项，OpenAI 兼容信封）。 */
+@Serializable
+data class LongCatModel(
+    val id: String,
+    @SerialName("owned_by") val ownedBy: String = "",
+)
+
+/** 模型清单（API Key 认证，GET /v1/models）。 */
+@Serializable
+data class LongCatPlan(
+    val models: List<LongCatModel> = emptyList(),
+)
+
+/**
+ * 额度快照：余额探活结果。balanceOK=null 表示未探活（探活失败或被跳过）。
+ * true=余额充足（探活 200）；false=余额不足（探活 402，key 本身有效）。
+ * 模型数直接读 plan.models（Go LongCatUsage.Models 仅为 --json 输出对齐，UI 不需要）。
+ */
+@Serializable
+data class LongCatUsage(
+    val balanceOK: Boolean? = null,
+)

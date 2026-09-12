@@ -16,6 +16,7 @@ import com.xieguiawu.apicheckers.ui.DetailScreen
 import com.xieguiawu.apicheckers.ui.BaiDetailScreen
 import com.xieguiawu.apicheckers.ui.GalaxyDetailScreen
 import com.xieguiawu.apicheckers.ui.HomeScreen
+import com.xieguiawu.apicheckers.ui.LongCatDetailScreen
 import com.xieguiawu.apicheckers.ui.QwenDetailScreen
 import com.xieguiawu.apicheckers.ui.SettingsScreen
 import com.xieguiawu.apicheckers.ui.theme.ApiCheckersTheme
@@ -52,6 +53,7 @@ private fun AppNav(vm: AppViewModel) {
                 onOpenQwen = { nav.navigate("qwen/$it") },
                 onOpenGalaxy = { nav.navigate("galaxy/$it") },
                 onOpenBai = { nav.navigate("bai/$it") },
+                onOpenLongCat = { nav.navigate("longcat/$it") },
                 onOpenSettings = { nav.navigate("settings") },
             )
         }
@@ -78,6 +80,13 @@ private fun AppNav(vm: AppViewModel) {
         }
         composable("bai/{id}") { backStackEntry ->
             BaiDetailScreen(
+                vm = vm,
+                id = backStackEntry.arguments?.getString("id") ?: "",
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable("longcat/{id}") { backStackEntry ->
+            LongCatDetailScreen(
                 vm = vm,
                 id = backStackEntry.arguments?.getString("id") ?: "",
                 onBack = { nav.popBackStack() },

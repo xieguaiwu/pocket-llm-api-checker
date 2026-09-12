@@ -858,3 +858,72 @@ fun parseBaiRecords(raw: String): Result<Pair<List<BaiRecord>, Boolean>> = runCa
     } == true
     recs to hasMore
 }
+
+/**
+ * LongCat（美团龙猫）数据仓库：模型清单（OpenAI 兼容 /v1/models）+ 余额探活。
+ * 平台特点（Go 仓 internal/repo/longcat.go fc30bb8 同口径）：无公开配额/余额
+ * API —— GET /v1/models 成功 = key 有效；小额 POST /v1/chat/completions
+ * （max_tokens=1，约 $0.000002/次，失败不收费）：200=余额充足，
+ * 402=余额不足（error.code=insufficient_quota，key 仍有效），401=无效 key。
+ */
+class LongCatRepo(
+    private val client: OkHttpClient = ApiClient.client,
+    private val baseURL: String = LongCatBaseURL,
+) {
+    companion object {
+        const val LongCatBaseURL = "https://api.longcat.chat/openai"
+
+        /** 探活载荷：max_tokens=1 把消耗压到最低 */
+        const val ProbePayload =
+            """{"model":"LongCat-2.0","messages":[{"role":"user","content":"ping"}],"max_tokens":1,"stream":false}"""
+    }
+
+    private fun base(): String = if (baseURL.isNotBlank()) baseURL.trimEnd('/') else LongCatBaseURL
+
+    /** 模型清单（401/403 → 统一认证文案，同 Go doGet 归一口径；空响应体由解析层报错）。 */
+    suspend fun models(apiKey: String): Result<LongCatPlan> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (apiKey.isBlank()) error("未配置 API Key")
+                val req = Request.Builder().url(base() + "/v1/models")
+                    .header("Authorization", "Bearer $apiKey")
+                    .header("Accept", "application/json")
+                    .header("User-Agent", ApiClient.BROWSER_UA)
+                    .build()
+                val resp = client.newCall(req).execute()
+                val body = resp.body?.string().orEmpty()
+                when {
+                    resp.code == 401 || resp.code == 403 -> error(LongCatAuthError)
+                    !resp.isSuccessful -> error("HTTP ${resp.code}: ${sanitizeServerText(body.take(120))}")
+                    else -> body
+                }
+            }
+        }.mapCatching { LongCatPlan(models = parseLongCatModels(it).getOrThrow()) }
+
+    /**
+     * 余额探活（POST /v1/chat/completions，max_tokens=1）。
+     * 200 → true（充足）；402 → false（不足，**非错误**：key 有效只是没余额）；
+     * 401 → LongCatAuthError（key 无效，余额无从谈起）；其他 → HTTP 错误。
+     */
+    suspend fun probeBalance(apiKey: String): Result<Boolean> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (apiKey.isBlank()) error("未配置 API Key")
+                val req = Request.Builder().url(base() + "/v1/chat/completions")
+                    .header("Authorization", "Bearer $apiKey")
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
+                    .header("User-Agent", ApiClient.BROWSER_UA)
+                    .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), ProbePayload))
+                    .build()
+                val resp = client.newCall(req).execute()
+                val body = resp.body?.string().orEmpty()
+                when {
+                    resp.code == 200 -> true
+                    resp.code == 402 -> false
+                    resp.code == 401 -> error(LongCatAuthError)
+                    else -> error("HTTP ${resp.code}: ${sanitizeServerText(body.take(120))}")
+                }
+            }
+        }
+}

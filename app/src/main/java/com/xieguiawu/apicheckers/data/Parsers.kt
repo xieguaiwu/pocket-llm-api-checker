@@ -778,6 +778,37 @@ fun parseBaiMonthlySpent(raw: String): Result<Long> = runCatching {
         ?: error("未获取到 BAI 本月消耗（响应缺少 monthly_spent）")
 }
 
+// ── LongCat（美团龙猫，OpenAI 兼容 /v1/models） ───────────────
+
+/** LongCat 凭据问题统一口径（与 Go parsers.ErrLongCatAuth 逐字一致；401/403 共用） */
+const val LongCatAuthError = "LongCat API Key 无效或已过期，请到 longcat.chat/platform/api_keys 核对"
+
+private val longcatJson = Json { ignoreUnknownKeys = true }
+
+/**
+ * 模型清单（GET /openai/v1/models 响应）。信封与 OpenAI 一致：
+ * {"data":[{"id":"…","owned_by":"…"},…]}。id 去重 + 按 id 排序；空清单视为失败。
+ */
+fun parseLongCatModels(raw: String): Result<List<LongCatModel>> = runCatching {
+    val env = try {
+        longcatJson.parseToJsonElement(raw).jsonObject
+    } catch (e: Exception) {
+        error("LongCat 模型清单 JSON 解析失败: ${e.message}")
+    }
+    val arr = env["data"]?.jsonArray ?: error("未获取到 LongCat 可用模型")
+    val seen = mutableSetOf<String>()
+    val out = mutableListOf<LongCatModel>()
+    for (e in arr) {
+        val o = e.jsonObject
+        val id = (o["id"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        if (id.isEmpty() || !seen.add(id)) continue
+        val owned = (o["owned_by"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        out.add(LongCatModel(id = id, ownedBy = owned))
+    }
+    if (out.isEmpty()) error("未获取到 LongCat 可用模型")
+    out.sortedBy { it.id }
+}
+
 /** ANSI/控制字符消毒（与 Go parsers.SanitizeText 同语义：剥 CSI/OSC 转义与控制字符，保留 \n\t） */
 fun sanitizeServerText(s: String): String {
     val dirty = s.any { r -> r == '\u001B' || (r < ' ' && r != '\n' && r != '\t') || r == '\u007F' }
