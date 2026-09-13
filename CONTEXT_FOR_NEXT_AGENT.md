@@ -1,5 +1,8 @@
 # CONTEXT_FOR_NEXT_AGENT.md
 
+
+> 🔗 跨仓 F-Droid 申请总览（五 app MR 状态 / GitLab 基础设施 / 提交流程 / 教训索引）：`../FDROID_PORTFOLIO.md`——状态变更时与本文双向同步。
+
 ## 2026-09-12 材料补全批（提交就绪）
 - **可复现性实测通过**：tag v1.1.0 干净 worktree 双构建，unsigned APK 一致
   `b34c8279a7d5ec5c3a4bc5c752eabd218f451fbefafe92fe664f7fe701667757`
