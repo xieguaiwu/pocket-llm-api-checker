@@ -105,5 +105,13 @@ API Checkers — 极简深色 Android app，查看 DeepSeek API、OpenCode（Zen
 ## 知识图谱
 - graphify-out/: 存在（**2026-08-29 晚间 galaxy provider 后重建**；图谱不入库（.gitignore））
 
+## 2026-09-15 F-Droid 审核第一轮响应（reviewer: linsui）
+
+- **reviewer 要求已全部落实**：①MR 描述换 App Inclusion 模板+勾选框，标题改 `New app: API Checkers (com.xieguiawu.apicheckers)` ②`commit` 钉全 hash `ea52b9a55fa86d9f15faa6b6fbf9a66db9edef25`（tag v1.1.0）③删旧版本 Build（只留 v1.1.0/vc2）④NonFreeNet 补理由。
+- 应用侧无改动（本仓无新发版；HEAD 上的智星云 + 白B.AI provider 仍未发版，发 v1.2.0 时再追加第三个 Build 块）。
+- **本地 CI 复刻（fdroidserver git master）**：rewritemeta 无 diff / lint 零警告 / checkupdates --auto 无 diff / scanner（unsigned APK）无发现 / tools 六脚本全过。
+- fork CI 红叉 = GitLab 身份验证门禁（零 job），已请求 reviewer 从上游重触发。
+- 元数据副本 docs/fdroid/*.yml 已同步规范形；validate 脚本已支持全 hash commit。
+
 ## 最后更新时间
-2026-09-12（F-Droid 材料补全批：可复现实测 + SUBMIT_GUIDE + MR patch + README 破图修复）
+2026-09-15（审核第一轮：四项要求落实 + 元数据规范形）
